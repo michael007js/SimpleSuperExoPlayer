@@ -22,7 +22,7 @@
                 android:text="出了点小问题，请尝试更换网络环境或稍后重试"
                 android:textColor="@android:color/white" />
 
-            <cn.sss.michael.exo.widget.ExoStrongGradientButton
+            <com.sss.michael.exo.widget.ExoStrongGradientButton
                 android:id="@+id/status_btn"
                 android:layout_width="wrap_content"
                 android:layout_height="36dp"

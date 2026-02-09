@@ -37,7 +37,7 @@
                 android:layout_height="wrap_content"
                 tools:text="00:00" />
 
-            <cn.sss.michael.exo.widget.ExoSeekBar
+            <com.sss.michael.exo.widget.ExoSeekBar
                 android:id="@+id/seekBar"
                 android:layout_width="0dp"
                 android:layout_height="40dp"
@@ -108,7 +108,7 @@
                 android:text="调试" />
         </LinearLayout>
 
-        <cn.sss.michael.exo.widget.ExoSeekBar
+        <com.sss.michael.exo.widget.ExoSeekBar
             android:id="@+id/bottom_progress"
             android:layout_width="0dp"
             android:layout_height="10dp"

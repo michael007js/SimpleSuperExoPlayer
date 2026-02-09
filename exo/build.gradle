@@ -5,7 +5,7 @@ plugins {
 
 def versionConfig = rootProject.extensions.getByName("ext")
 android {
-    namespace 'cn.sss.michael.exo'
+    namespace 'com.sss.michael.exo'
     compileSdk versionConfig.androidMainCompileSdkVersion
     defaultConfig {
         minSdkVersion versionConfig.androidMainMinSdkVersion

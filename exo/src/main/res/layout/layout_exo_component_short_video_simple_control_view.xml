@@ -139,7 +139,7 @@
                     android:paddingHorizontal="16dp"
                     android:visibility="invisible">
 
-                    <cn.sss.michael.exo.widget.ExoDouyinArrowView
+                    <com.sss.michael.exo.widget.ExoDouyinArrowView
                         android:id="@+id/exoDouyinArrowView"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"

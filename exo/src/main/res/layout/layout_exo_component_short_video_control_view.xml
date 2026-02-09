@@ -23,7 +23,7 @@
                 android:src="@drawable/exo_ic_action_play" />
 
 
-            <cn.sss.michael.exo.widget.ExoSeekBar
+            <com.sss.michael.exo.widget.ExoSeekBar
                 android:id="@+id/seekBar"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"

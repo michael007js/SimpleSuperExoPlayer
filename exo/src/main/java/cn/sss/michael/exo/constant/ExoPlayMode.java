@@ -1,7 +1,0 @@
-package cn.sss.michael.exo.constant;
-
-public enum ExoPlayMode {
-    SHORT_VIDEO,
-    LIVE,
-    VOD
-}

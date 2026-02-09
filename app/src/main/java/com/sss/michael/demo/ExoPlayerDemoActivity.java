@@ -5,8 +5,8 @@ import android.widget.SeekBar;
 
 import com.sss.michael.demo.base.BaseActivity;
 import com.sss.michael.demo.databinding.ActivityExoDemoBinding;
-import cn.sss.michael.exo.constant.ExoCoreScale;
-import cn.sss.michael.exo.constant.ExoPlayMode;
+import com.sss.michael.exo.constant.ExoCoreScale;
+import com.sss.michael.exo.constant.ExoPlayMode;
 
 public class ExoPlayerDemoActivity extends BaseActivity<ActivityExoDemoBinding> {
     @Override

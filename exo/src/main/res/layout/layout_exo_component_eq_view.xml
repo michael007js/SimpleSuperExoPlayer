@@ -100,7 +100,7 @@
             </LinearLayout>
         </HorizontalScrollView>
 
-        <cn.sss.michael.exo.widget.ExoEqPanelView
+        <com.sss.michael.exo.widget.ExoEqPanelView
             android:id="@+id/eq"
             android:layout_width="match_parent"
             android:layout_height="0dp"

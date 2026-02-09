@@ -25,9 +25,4 @@ allprojects {
     }
 }
 
-ext {
-    PUBLISH_GROUP_ID = 'com.sss.michael.exo'
-    PUBLISH_ARTIFACT_ID = 'exo'
-    PUBLISH_VERSION = '1.0.0'
-}
 

@@ -5,13 +5,13 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-<!--        <spectrum.exo.michael.sss.cn.ExoSpectrumRingWareView-->
+<!--        <spectrum.exo.michael.sss.com.ExoSpectrumRingWareView-->
 <!--            android:id="@+id/exoSpectrumColumnView"-->
 <!--            android:layout_width="match_parent"-->
 <!--            android:layout_height="wrap_content"-->
 <!--            android:layout_gravity="top|right" />-->
 
-        <cn.sss.michael.exo.spectrum.ExoJumpLineGlowSpectrumView
+        <com.sss.michael.exo.spectrum.ExoJumpLineGlowSpectrumView
             android:id="@+id/exoSpectrumColumnView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />

@@ -42,4 +42,5 @@ dependencies {
     implementation androidDependencies.jetPack_viewmodel
     implementation androidDependencies.jetPack_viewmodel_savedstate
     implementation project(':exo')
+//    implementation 'com.github.michael007js:SimpleSuperExoPlayer:0.0.1'
 }

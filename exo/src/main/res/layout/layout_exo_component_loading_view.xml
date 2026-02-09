@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/exo_mask_color" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <cn.sss.michael.exo.widget.ExoLoadingText
+                android:id="@+id/loading_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:exo_drawText="加载中..."
+                app:exo_drawTextColor="#77FFFFFF"
+                app:exo_drawTextSize="30dp"
+                app:exo_isAutoStartAnim="true"
+                app:exo_mask_view_color="@color/exo_loading_highlight_color" />
+
+            <TextView
+                android:id="@+id/speed"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#77FFFFFF"
+                android:textSize="12dp"
+                android:textStyle="bold"
+                tools:text="0 KB/s" />
+        </LinearLayout>
+
+
+    </FrameLayout>
+</layout>

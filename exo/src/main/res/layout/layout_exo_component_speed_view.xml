@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <FrameLayout
+        android:id="@+id/fl_parent"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:id="@+id/lin_speed"
+            android:layout_width="320dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="right|top"
+            android:layout_marginRight="-320dp"
+            android:background="@drawable/bg_exo_speed"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="15dp">
+
+            <TextView
+                style="@style/exo_textColor_ffffff_textSize_14"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="50dp"
+                android:text="播放速度" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/speed_recyclerView"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:overScrollMode="never" />
+        </LinearLayout>
+    </FrameLayout>
+</layout>

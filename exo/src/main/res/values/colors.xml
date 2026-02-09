@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="exo_colorPrimary">#6200EE</color>
+    <color name="exo_colorPrimaryDark">#3700B3</color>
+    <color name="exo_colorAccent">#2489E6</color>
+    <color name="exo_white">#ffffff</color>
+    <color name="exo_background_color">#4D000000</color>
+    <color name="exo_999999">#999999</color>
+    <color name="exo_mask_color">#66000000</color>
+    <color name="exo_loading_highlight_color">#2489E6</color>
+
+    <!--默认状态下ExoStrongGradientButton文字色-->
+    <color name="exo_strong_gradient_button_normal_text_color">#FFFFFF</color>
+    <color name="exo_strong_gradient_button_press_text_color">#FFFFFF</color>
+    <color name="exo_strong_gradient_button_unable_text_color">#FFFFFF</color>
+    <!--默认状态下ExoStrongGradientButton渐变背景色-->
+    <color name="exo_strong_gradient_button_normal_start_background_color">#2489E6</color>
+    <color name="exo_strong_gradient_button_normal_end_background_color">#3973ff</color>
+    <color name="exo_strong_gradient_button_press_start_background_color">#1379D5</color>
+    <color name="exo_strong_gradient_button_press_end_background_color">#2862EE</color>
+    <color name="exo_strong_gradient_button_unable_start_background_color">#aaaaff</color>
+    <color name="exo_strong_gradient_button_unable_end_background_color">#aaaaff</color>
+
+    <!--默认状态下ExoStrongGradientButton非渐变背景色-->
+    <color name="exo_strong_gradient_button_normal_background_color">#2489E6</color>
+    <color name="exo_strong_gradient_button_press_background_color">#3973ff</color>
+    <color name="exo_strong_gradient_button_unable_background_color">#AEAEAE</color>
+
+    <!--默认状态下ExoStrongGradientButton边框色-->
+    <color name="exo_strong_gradient_button_normal_stroke_color">#00000000</color>
+    <color name="exo_strong_gradient_button_press_stroke_color">#00000000</color>
+    <color name="exo_strong_gradient_button_unable_stroke_color">#00000000</color>
+</resources>

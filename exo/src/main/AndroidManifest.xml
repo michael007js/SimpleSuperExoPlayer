@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- 网络播放需要 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 监听网络状态 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 本地文件播放 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- 保持屏幕常亮 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 震动，用于长按屏幕时 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 访问WIFI，用于获取WIFI状态以显示于横屏标题栏 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 访问精确位置，用于统计WIFI信号强度以显示于横屏标题栏 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 访问大概位置，用于统计WIFI信号强度以显示于横屏标题栏 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 声明音频使用特性 -->
+    <uses-feature
+        android:name="android.hardware.audio.output"
+        android:required="true" />
+</manifest>

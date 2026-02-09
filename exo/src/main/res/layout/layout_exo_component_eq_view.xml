@@ -1,0 +1,110 @@
+<layout xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/exo_mask_color"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/iv_close"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="25dp"
+            android:padding="10dp"
+            android:src="@drawable/icon_exo_close_white" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+
+                <TextView
+                    android:id="@+id/btn_sound_1"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="原音" />
+
+                <TextView
+                    android:id="@+id/btn_sound_2"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="车库" />
+
+                <TextView
+                    android:id="@+id/btn_sound_3"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="音乐厅" />
+
+                <TextView
+                    android:id="@+id/btn_sound_4"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="重低音" />
+
+                <TextView
+                    android:id="@+id/btn_sound_5"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="古典" />
+
+                <TextView
+                    android:id="@+id/btn_sound_6"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="流行" />
+
+                <TextView
+                    android:id="@+id/btn_sound_7"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="优雅午后" />
+
+                <TextView
+                    android:id="@+id/btn_sound_8"
+                    style="@style/exo_textColor_ffffff_textSize_10"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="人声" />
+
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <cn.sss.michael.exo.widget.ExoEqPanelView
+            android:id="@+id/eq"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+    </LinearLayout>
+</layout>

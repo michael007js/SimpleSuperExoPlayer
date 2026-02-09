@@ -1,0 +1,45 @@
+apply plugin: 'com.android.application'
+def versionConfig = rootProject.extensions.getByName("ext")
+android {
+    namespace 'com.sss.michael.demo'
+    compileSdk versionConfig.androidMainCompileSdkVersion
+
+    defaultConfig {
+        applicationId "com.sss.michael.demo"
+        minSdkVersion versionConfig.androidMainMinSdkVersion
+        targetSdkVersion versionConfig.androidMainTargetSdkVersion
+
+        versionCode versionConfig.androidMainVersionCode
+        versionName versionConfig.androidMainVersionName
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        buildFeatures {
+            dataBinding true
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    implementation androidDependencies.androidx_core
+    implementation androidDependencies.design
+    implementation androidDependencies.constraint
+    implementation androidDependencies.cardview_v7
+    implementation androidDependencies.multidex
+
+    implementation androidDependencies.jetPack_livedata
+    implementation androidDependencies.jetPack_viewmodel
+    implementation androidDependencies.jetPack_viewmodel_savedstate
+    implementation project(':exo')
+}

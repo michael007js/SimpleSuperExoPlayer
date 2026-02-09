@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="exo_textColor_ffffff_textSize_14">
+        <item name="android:textColor">@color/exo_white</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <style name="exo_textColor_ffffff_textSize_10">
+        <item name="android:textColor">@color/exo_white</item>
+        <item name="android:textSize">10sp</item>
+    </style>
+
+    <style name="exo_textColor_ffffff_textSize_16">
+        <item name="android:textColor">@color/exo_white</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <style name="exo_textColor_999999_textSize_16">
+        <item name="android:textColor">@color/exo_999999</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <declare-styleable name="ExoLoadingText">
+        <attr name="exo_mask_view_color" format="color" />
+        <attr name="exo_drawText" format="string" />
+        <attr name="exo_drawTextSize" format="dimension" />
+        <attr name="exo_drawTextColor" format="color" />
+        <attr name="exo_isAutoStartAnim" format="boolean" />
+        <attr name="exo_animDuration" format="integer" />
+    </declare-styleable>
+
+    <declare-styleable name="ExoStrongGradientButton">
+        <attr name="exo_leftTopRadius_Gradient" format="dimension" />
+        <attr name="exo_leftBottomRadius_Gradient" format="dimension" />
+        <attr name="exo_rightTopRadius_Gradient" format="dimension" />
+        <attr name="exo_rightBottomRadius_Gradient" format="dimension" />
+        <attr name="exo_isGradientStyle_Gradient" format="boolean" />
+        <attr name="exo_radius_Gradient" format="dimension" />
+        <attr name="exo_normalTextColor_Gradient" format="color" />
+        <attr name="exo_pressTextColor_Gradient" format="color" />
+        <attr name="exo_unableTextColor_Gradient" format="color" />
+        <attr name="exo_normalBackgroundColor_Gradient" format="color" />
+        <attr name="exo_pressBackgroundColor_Gradient" format="color" />
+        <attr name="exo_unableBackgroundColor_Gradient" format="color" />
+        <attr name="exo_normalBackgroundColor_start_Gradient" format="color" />
+        <attr name="exo_normalBackgroundColor_end_Gradient" format="color" />
+        <attr name="exo_pressBackgroundColor_start_Gradient" format="color" />
+        <attr name="exo_pressBackgroundColor_end_Gradient" format="color" />
+        <attr name="exo_unableBackgroundColor_start_Gradient" format="color" />
+        <attr name="exo_unableBackgroundColor_end_Gradient" format="color" />
+        <attr name="exo_normalStrokeColor_Gradient" format="color" />
+        <attr name="exo_pressStrokeColor_Gradient" format="color" />
+        <attr name="exo_unableStrokeColor_Gradient" format="color" />
+        <attr name="exo_normalStrokeWidth_Gradient" format="dimension" />
+        <attr name="exo_pressStrokeWidth_Gradient" format="dimension" />
+        <attr name="exo_unableStrokeWidth_Gradient" format="dimension" />
+        <attr name="exo_gradient_orientation">
+            <enum name="exo_left_right" value="1" />
+            <enum name="exo_right_left" value="2" />
+            <enum name="exo_top_bottom" value="3" />
+            <enum name="exo_bottom_top" value="4" />
+            <enum name="exo_topLeft_bottomRight" value="5" />
+            <enum name="exo_topRight_bottomLeft" value="6" />
+            <enum name="exo_bottomLeft_topRight" value="7" />
+            <enum name="exo_bottomRight_topLeft" value="8" />
+        </attr>
+    </declare-styleable>
+</resources>

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <FrameLayout
+        android:id="@+id/complete_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/exo_background_color">
+
+        <ImageView
+            android:id="@+id/stop_fullscreen"
+            android:layout_width="46dp"
+            android:layout_height="46dp"
+            android:padding="12dp"
+            android:src="@drawable/exo_ic_action_arrow_back"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/iv_replay"
+                android:layout_width="50dp"
+                android:layout_height="50dp"
+                android:layout_gravity="center"
+                android:background="@drawable/exo_shape_play_bg"
+                android:padding="12dp"
+                android:src="@drawable/exo_ic_action_replay" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="重新播放"
+                android:layout_marginTop="12dp"
+                android:textColor="@android:color/white" />
+
+        </LinearLayout>
+    </FrameLayout>
+</layout>

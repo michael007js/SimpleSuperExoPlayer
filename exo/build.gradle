@@ -73,7 +73,7 @@ afterEvaluate {
             release(MavenPublication) {
                 groupId = 'com.github.michael007js'
                 artifactId = 'SimpleSuperExoPlayer'
-                version = '1.0.0'
+                version = '0.0.1'
 
                 from components.release
             }

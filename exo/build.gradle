@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.library'
+    id 'maven-publish'
 }
 
 def versionConfig = rootProject.extensions.getByName("ext")
@@ -27,7 +28,12 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
-
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
 }
 repositories {
     flatDir {
@@ -61,3 +67,16 @@ dependencies {
 
 }
 
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                groupId = 'com.github.michael007js'
+                artifactId = 'SimpleSuperExoPlayer'
+                version = '1.0.0'
+
+                from components.release
+            }
+        }
+    }
+}

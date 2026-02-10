@@ -4,15 +4,13 @@ ext {
 //            'arm64-v8a'//珠海小厂、360等专用
 "armeabi-v7a", 'arm64-v8a', "x86", 'x86_64'//,'armeabi'
     ]
-    //数据库版本objectboxVersion
-    objectboxVersion = "5.1.0"
 
     //开发模式
     developMode = true
 
     //主工程版本配置
     androidMainCompileSdkVersion = 35
-    androidMainMinSdkVersion = 23
+    androidMainMinSdkVersion = 21
     androidMainTargetSdkVersion = 33
     androidMainVersionCode = 357
     androidMainVersionName = "8.5.16"

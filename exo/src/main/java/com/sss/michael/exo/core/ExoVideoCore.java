@@ -123,6 +123,7 @@ public abstract class ExoVideoCore implements IExoController, IExoLifecycle {
         trackSelector.setParameters(
                 trackSelector.buildUponParameters()
                         .setRendererDisabled(C.TRACK_TYPE_AUDIO, false)
+                        .setRendererDisabled(C.TRACK_TYPE_VIDEO, false)
         );
         player = new ExoPlayer.Builder(mContext, renderersFactory)
                 .setTrackSelector(trackSelector)

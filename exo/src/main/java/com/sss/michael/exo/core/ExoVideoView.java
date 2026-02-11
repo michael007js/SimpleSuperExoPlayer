@@ -51,7 +51,7 @@ import com.sss.michael.exo.util.ExoPlayerUtils;
 public class ExoVideoView extends ExoVideoCore {
     // 是否开启重力旋转
     private boolean enableOrientation = false;
-    // surface是否绑定
+    // surface是否绑定（仅视频播放需要）
     private boolean isSurfaceReadyed = false;
     // 暂停前的播放器播放状态
     private boolean lastPlayWhenReadyBeforePaused = false;
@@ -74,8 +74,8 @@ public class ExoVideoView extends ExoVideoCore {
     public ExoVideoView(Context context, IExoNotifyCallBack iExoNotifyCallBack, IExoFFTCallBack iExoFFTCallBack) {
         super(context, iExoNotifyCallBack, iExoFFTCallBack);
         AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .setUsage(C.USAGE_MEDIA)          // 媒体音频用途
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)  // 音乐类型
                 .build();
         player.setAudioAttributes(audioAttributes, true);
         player.setVolume(1.0f);
@@ -202,6 +202,13 @@ public class ExoVideoView extends ExoVideoCore {
 
                 @Override
                 public void onExoVideoSizeChanged(@NonNull VideoSize videoSize) {
+                    // 纯音频播放时跳过视频尺寸计算
+                    if (playerInfo.getExoPlayMode() == ExoPlayMode.MUSIC) {
+                        ExoLog.log("纯音频播放，跳过视频尺寸计算");
+                        return;
+                    }
+
+                    // 视频尺寸信息更新
                     playerInfo.setPixelWidthHeightRatio(videoSize.pixelWidthHeightRatio);
                     playerInfo.setVideoWidth(videoSize.width);
                     playerInfo.setVideoHeight(videoSize.height);
@@ -223,7 +230,7 @@ public class ExoVideoView extends ExoVideoCore {
                                         playerInfo.getScaleMode()  // 自定义缩放模式
                                 );
 
-                                // 计算：视频相对于父容器的 Rect
+                                // 计算视频相对于父容器的 Rect
                                 if (textureView.getParent() instanceof ViewGroup) {
                                     ViewGroup textureParent = (ViewGroup) textureView.getParent();
                                     // 获取 TextureView 相对于父容器的偏移（左、上）
@@ -497,6 +504,11 @@ public class ExoVideoView extends ExoVideoCore {
             player.stop();
             player.clearMediaItems();
 
+            // 纯音频播放时清空视频Surface，避免无视频轨道报错
+            if (playerInfo.getExoPlayMode() == ExoPlayMode.MUSIC) {
+                player.setVideoSurface(null);
+            }
+
             playerInfo.setBytesInLastSecond(0);
             MediaSource source = ExoMediaSourceFactory.buildMediaSource(
                     mContext,
@@ -660,6 +672,11 @@ public class ExoVideoView extends ExoVideoCore {
      */
     @Override
     public void setScaleMode(int mode) {
+        // 纯音频播放时跳过缩放设置
+        if (playerInfo.getExoPlayMode() == ExoPlayMode.MUSIC) {
+            return;
+        }
+
         if (mode != ExoCoreScale.SCALE_FIT && mode != ExoCoreScale.SCALE_FILL_CUT && mode != ExoCoreScale.SCALE_STRETCH
                 && mode != ExoCoreScale.SCALE_16_9 && mode != ExoCoreScale.SCALE_21_9 && mode != ExoCoreScale.SCALE_AUTO)
             return;
@@ -705,8 +722,6 @@ public class ExoVideoView extends ExoVideoCore {
             // PlaybackParameters 允许同时设置速度和音调
             PlaybackParameters params = new PlaybackParameters(speed);
             player.setPlaybackParameters(params);
-
-            // 更新 playerInfo 方便 UI 逻辑使用
             playerInfo.setSpeed(speed);
             if (iExoNotifyCallBack != null) {
                 iExoNotifyCallBack.onPlayerInfoChanged(playerInfo);
@@ -734,6 +749,11 @@ public class ExoVideoView extends ExoVideoCore {
      */
     @Override
     public void startFullScreen(boolean callFromActive) {
+        // 纯音频播放时跳过全屏逻辑
+        if (playerInfo.getExoPlayMode() == ExoPlayMode.MUSIC) {
+            return;
+        }
+
         if (isFullScreen()) return;
         Activity activity = ExoPlayerUtils.scanForActivity(mContext);
         if (activity == null) return;
@@ -773,6 +793,11 @@ public class ExoVideoView extends ExoVideoCore {
      */
     @Override
     public void stopFullScreen(boolean callFromActive) {
+        // 纯音频播放时跳过全屏逻辑
+        if (playerInfo.getExoPlayMode() == ExoPlayMode.MUSIC) {
+            return;
+        }
+
         if (!isFullScreen()) return;
         Activity activity = ExoPlayerUtils.scanForActivity(mContext);
         if (activity == null) return;
@@ -877,7 +902,10 @@ public class ExoVideoView extends ExoVideoCore {
      */
     @Override
     public void play(ExoPlayMode mode, long lastPlayTime, String url) {
-        if (!isSurfaceReadyed) {
+        this.pendingLastPlayTime = mode == ExoPlayMode.LIVE ? 0 : lastPlayTime;
+        // 纯音频播放跳过Surface检查
+        boolean isAudioOnly = mode == ExoPlayMode.MUSIC;
+        if (!isAudioOnly && !isSurfaceReadyed) {
             ExoLog.log("Surface 尚未就绪，暂存模式：" + mode + "，断点续播时间：" + lastPlayTime + "，播放请求: " + url);
             this.pendingUrl = url;
             this.pendingMode = mode;
@@ -886,24 +914,21 @@ public class ExoVideoView extends ExoVideoCore {
             }
             playerInfo.setExoRenderedFirstFramed(false);
             playerInfo.setExoPlayMode(mode);
-            if (mode == ExoPlayMode.LIVE) {
-                this.pendingLastPlayTime = 0;
-            } else {
-                this.pendingLastPlayTime = lastPlayTime;
-            }
             return;
         }
         // 清除暂存，执行真实播放逻辑
         this.pendingUrl = null;
         this.pendingMode = null;
-
-        setPlayerState(isFullScreen() ? ExoPlayerMode.PLAYER_FULL_SCREEN : ExoPlayerMode.PLAYER_NORMAL);
+        // 音频播放时跳过视频相关的播放器状态设置
+        if (!isAudioOnly) {
+            setPlayerState(isFullScreen() ? ExoPlayerMode.PLAYER_FULL_SCREEN : ExoPlayerMode.PLAYER_NORMAL);
+        }
         playerInfo.setUri(Uri.parse(url));
         playerInfo.setExoPlayMode(mode);
         if (iExoNotifyCallBack != null) {
             iExoNotifyCallBack.onPlayerInfoChanged(playerInfo);
         }
-        buildSource(false, true, "播放");
+        buildSource(false, true, isAudioOnly ? "音频播放" : "视频播放");
     }
 
     /**
@@ -1068,7 +1093,7 @@ public class ExoVideoView extends ExoVideoCore {
     @Override
     public void bindSurfaceWhileTextureAvailable(@NonNull Surface surface) {
         isSurfaceReadyed = true;
-        if (player != null) {
+        if (player != null && playerInfo.getExoPlayMode() != ExoPlayMode.MUSIC) {
             player.setVideoSurface(surface);
         }
         if (pendingUrl != null && pendingMode != null) {
@@ -1104,8 +1129,9 @@ public class ExoVideoView extends ExoVideoCore {
             this.playerContainer = playerContainer;
         }
         this.playerView = playerView;
-        playerView.setKeepScreenOn(true);
-
+        if (playerInfo.getExoPlayMode() != ExoPlayMode.MUSIC) {
+            playerView.setKeepScreenOn(true);
+        }
     }
 
     /**

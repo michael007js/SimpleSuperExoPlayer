@@ -4,14 +4,14 @@ import android.view.View;
 import android.widget.SeekBar;
 
 import com.sss.michael.demo.base.BaseActivity;
-import com.sss.michael.demo.databinding.ActivityExoDemoBinding;
+import com.sss.michael.demo.databinding.ActivityVideoBinding;
 import com.sss.michael.exo.constant.ExoCoreScale;
 import com.sss.michael.exo.constant.ExoPlayMode;
 
-public class ExoPlayerDemoActivity extends BaseActivity<ActivityExoDemoBinding> {
+public class VideoActivity extends BaseActivity<ActivityVideoBinding> {
     @Override
     protected int setLayout() {
-        return R.layout.activity_exo_demo;
+        return R.layout.activity_video;
     }
 
     @Override

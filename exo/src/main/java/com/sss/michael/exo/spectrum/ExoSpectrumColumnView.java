@@ -56,9 +56,9 @@ public class ExoSpectrumColumnView extends View implements IExoFFTCallBack {
     // 中心偏移量（用于上下对称或防止柱体贴边）
     private int centerOffset = 4;
     //  悬停点下落重力加速度，数值越大，下落越快
-    private float dotGravity = 0.25f;
+    private float dotGravity = 0.05f;
     // 柱体回落加速度，控制柱体从峰值回落到 0 的速度
-    private float columnFallAcceleration = 0.85f;
+    private float columnFallAcceleration = 0.35f;
     // 悬停点高度（px）
     private int dotHeight = 2;
     // 悬停点与柱体之间的垂直偏移量

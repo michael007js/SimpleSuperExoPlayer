@@ -246,6 +246,18 @@ public class ExoVideoPlayRecyclerView extends FrameLayout implements IExoOnPageC
     }
 
     /**
+     * 强行调用布局管理器的onChildViewAttachedToWindow方法，确保指定位置的view被正确附加到窗口
+     *
+     * @param position 索引
+     */
+    public void forceCallPageSelected(int position) {
+        View view = findViewByPosition(position);
+        if (view != null) {
+            layoutManager.onChildViewAttachedToWindow(view);
+        }
+    }
+
+    /**
      * 设置播放器回调通知
      *
      * @param iExoNotifyCallBack 播放器核心回调接口

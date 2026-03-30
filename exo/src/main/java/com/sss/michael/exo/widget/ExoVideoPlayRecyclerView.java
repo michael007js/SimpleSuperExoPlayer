@@ -96,6 +96,7 @@ public class ExoVideoPlayRecyclerView extends FrameLayout implements IExoOnPageC
 
     private float mDownX = -1, mDownY = -1;
     private boolean isPulling;
+    private boolean pullDownRefreshEnabled = true;
 
     private int preLoadNumber;
 
@@ -291,6 +292,16 @@ public class ExoVideoPlayRecyclerView extends FrameLayout implements IExoOnPageC
      */
     public void setOnVideoPlayRecyclerViewCallBack(OnExoVideoPlayRecyclerViewCallBack cb) {
         this.onExoVideoPlayRecyclerViewCallBack = cb;
+    }
+
+    /**
+     * 设置下拉 刷新 启用
+     *
+     * @param enabled 是否启用
+     */
+    public void setPullDownRefreshEnabled(boolean enabled) {
+        pullDownRefreshEnabled = enabled;
+        resetViewState();
     }
 
     /**
@@ -718,6 +729,13 @@ public class ExoVideoPlayRecyclerView extends FrameLayout implements IExoOnPageC
             return;
         }
 
+        if (isTopPull && !pullDownRefreshEnabled) {
+            tvTip.setVisibility(INVISIBLE);
+            updateScrollUI(translationY, true);
+            return;
+        }
+
+        tvTip.setVisibility(VISIBLE);
         if (Math.abs(translationY) > threshold) {
             tvTip.setText(isTopPull ? "释放立即刷新" : "释放立即加载");
         } else {
@@ -757,9 +775,12 @@ public class ExoVideoPlayRecyclerView extends FrameLayout implements IExoOnPageC
      */
     private void handleScrollUp(float dyUp) {
         float actualTransY = dyUp / DRAG_RATE;
-
         if (actualTransY > threshold && !recyclerView.canScrollVertically(-1)) {
-            triggerRefresh();
+            if (pullDownRefreshEnabled) {
+                triggerRefresh();
+            } else {
+                resetViewState();
+            }
             return;
         }
 

@@ -61,6 +61,8 @@ public class ExoVideoView extends ExoVideoCore {
     private ExoPlayMode pendingMode;
     // 断点续播（直播类型下无效）
     private long pendingLastPlayTime;
+    // 当前这次媒体加载是否已经执行过断点续播的 seek，避免在多次 READY 回调中重复跳转
+    private boolean hasPendingSeekApplied = false;
     // 设备方向监听
     private ExoOrientationHelper exoOrientationHelper;
     // 承载播放器的真实容器
@@ -129,7 +131,6 @@ public class ExoVideoView extends ExoVideoCore {
                 }
 
                 // 只跳转一次
-                boolean seeked;
                 private int bufferingCount = 0;
                 private long lastBufferingTime = 0;
 
@@ -159,8 +160,8 @@ public class ExoVideoView extends ExoVideoCore {
                     }
                     if (state == Player.STATE_READY) {
                         // 断点续播
-                        if (!seeked && pendingLastPlayTime > 0) {
-                            seeked = true;
+                        if (!hasPendingSeekApplied && pendingLastPlayTime > 0) {
+                            hasPendingSeekApplied = true;
                             player.seekTo(pendingLastPlayTime);
                             ExoLog.log("监听到 STATE_READY，执行断点续播时间跳转: " + pendingLastPlayTime);
                             pendingLastPlayTime = 0;
@@ -902,6 +903,7 @@ public class ExoVideoView extends ExoVideoCore {
      */
     @Override
     public void play(ExoPlayMode mode, long lastPlayTime, String url) {
+        hasPendingSeekApplied = false;
         this.pendingLastPlayTime = mode == ExoPlayMode.LIVE ? 0 : lastPlayTime;
         // 纯音频播放跳过Surface检查
         boolean isAudioOnly = mode == ExoPlayMode.MUSIC;
@@ -954,6 +956,7 @@ public class ExoVideoView extends ExoVideoCore {
         pendingUrl = null;
         pendingMode = null;
         pendingLastPlayTime = 0;
+        hasPendingSeekApplied = false;
         lastPlayWhenReadyBeforePaused = false;
 
         playerInfo.setCurrentRetryCountWhileFail(0);
@@ -1180,6 +1183,7 @@ public class ExoVideoView extends ExoVideoCore {
         pendingUrl = null;
         pendingMode = null;
         pendingLastPlayTime = 0;
+        hasPendingSeekApplied = false;
         if (playerView != null) {
             playerView.setKeepScreenOn(false);
         }

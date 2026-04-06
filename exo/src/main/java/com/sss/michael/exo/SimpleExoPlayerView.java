@@ -170,9 +170,9 @@ public class SimpleExoPlayerView extends FrameLayout
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         );
-        textureParams.bottomMargin = ExoDensityUtil.dp2px(getContext(), left);
-        textureParams.bottomMargin = ExoDensityUtil.dp2px(getContext(), top);
-        textureParams.bottomMargin = ExoDensityUtil.dp2px(getContext(), right);
+        textureParams.leftMargin = ExoDensityUtil.dp2px(getContext(), left);
+        textureParams.topMargin = ExoDensityUtil.dp2px(getContext(), top);
+        textureParams.rightMargin = ExoDensityUtil.dp2px(getContext(), right);
         textureParams.bottomMargin = ExoDensityUtil.dp2px(getContext(), bottom);
         textureView.setLayoutParams(textureParams);
     }

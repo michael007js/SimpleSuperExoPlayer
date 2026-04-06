@@ -24,5 +24,6 @@
         </activity>
         <activity android:name="com.sss.michael.demo.VideoActivity" />
         <activity android:name="com.sss.michael.demo.MusicActivity" />
+        <activity android:name="com.sss.michael.demo.ShortVideoActivity" />
     </application>
 </manifest>

@@ -4,26 +4,34 @@ import android.view.View;
 
 import androidx.annotation.NonNull;
 
+import com.sss.michael.exo.bean.ExoPcmStreamConfig;
 import com.sss.michael.exo.component.ExoShortVideoSimpleControlBarView;
 import com.sss.michael.exo.constant.ExoEqualizerPreset;
 import com.sss.michael.exo.constant.ExoPlayMode;
 import com.sss.michael.exo.core.ExoPlayerInfo;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * @author Michael by SSS
- * @date 2025/12/25 0025 21:33
- * @Description 此类的目的是为了在 IExoControlComponent 中既能调用 IExoController 的api又能调用 IExoControlComponent 的api，
+ * 播放控制包装器。
+ *
+ * <p>该类为控制组件提供统一入口。组件侧只依赖一个包装器实例，包装器内部则同时代理传统
+ * {@link IExoController} 能力和新增的 {@link IExoPcmStreamController} 能力，从而在不破坏
+ * 既有组件接口的前提下支持 PCM 流式播放。
  */
-public class ExoControllerWrapper implements IExoController, IExoNotifyCallBack {
+public class ExoControllerWrapper implements IExoController, IExoPcmStreamController, IExoNotifyCallBack {
     private final IExoController iExoController;
+    private final IExoPcmStreamController iExoPcmStreamController;
     private final IExoNotifyCallBack iExoNotifyCallBack;
 
 
     public ExoControllerWrapper(IExoController iExoController, IExoNotifyCallBack iExoNotifyCallBack) {
         this.iExoController = iExoController;
+        this.iExoPcmStreamController = iExoController instanceof IExoPcmStreamController
+                ? (IExoPcmStreamController) iExoController
+                : null;
         this.iExoNotifyCallBack = iExoNotifyCallBack;
     }
 
@@ -166,6 +174,51 @@ public class ExoControllerWrapper implements IExoController, IExoNotifyCallBack 
         }
     }
 
+    @Override
+    public void startPcmStream(ExoPcmStreamConfig config) {
+        if (iExoPcmStreamController != null) {
+            iExoPcmStreamController.startPcmStream(config);
+        }
+    }
+
+    @Override
+    public void appendPcmData(ByteBuffer buffer) {
+        if (iExoPcmStreamController != null) {
+            iExoPcmStreamController.appendPcmData(buffer);
+        }
+    }
+
+    @Override
+    public void appendPcmData(byte[] data, int offset, int length) {
+        if (iExoPcmStreamController != null) {
+            iExoPcmStreamController.appendPcmData(data, offset, length);
+        }
+    }
+
+    @Override
+    public void completePcmStream() {
+        if (iExoPcmStreamController != null) {
+            iExoPcmStreamController.completePcmStream();
+        }
+    }
+
+    @Override
+    public void cancelPcmStream() {
+        if (iExoPcmStreamController != null) {
+            iExoPcmStreamController.cancelPcmStream();
+        }
+    }
+
+    @Override
+    public boolean isPcmStreaming() {
+        return iExoPcmStreamController != null && iExoPcmStreamController.isPcmStreaming();
+    }
+
+    @Override
+    public long getQueuedPcmDurationMs() {
+        return iExoPcmStreamController == null ? 0 : iExoPcmStreamController.getQueuedPcmDurationMs();
+    }
+
 
     @Override
     public List<IExoControlComponent> getExoComponents() {
@@ -248,10 +301,10 @@ public class ExoControllerWrapper implements IExoController, IExoNotifyCallBack 
     }
 
 
-    ////////////////////////////// 快捷函数 /////////////////////////////
+    ////////////////////////////// 便捷函数 /////////////////////////////
 
     /**
-     * 切换播放暂停
+     * 在播放与暂停之间切换。
      */
     public void togglePlayPause() {
         if (isPlaying()) {
@@ -262,7 +315,7 @@ public class ExoControllerWrapper implements IExoController, IExoNotifyCallBack 
     }
 
     /**
-     * 切换播放暂停
+     * 在全屏与非全屏之间切换。
      */
     public void toggleFullScreen() {
         if (isFullScreen()) {

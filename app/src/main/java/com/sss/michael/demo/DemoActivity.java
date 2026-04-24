@@ -27,7 +27,11 @@ public class DemoActivity extends BaseActivity<ActivityDemoBinding> {
                 startActivity(VideoActivity.class);
             }
         });
-
+        binding.btnStream.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(TtsStreamActivity.class);
+            }
+        });
     }
-
 }

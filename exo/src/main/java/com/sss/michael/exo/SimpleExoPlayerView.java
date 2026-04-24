@@ -13,6 +13,7 @@ import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.sss.michael.exo.bean.ExoPcmStreamConfig;
 import com.sss.michael.exo.callback.ExoControllerWrapper;
 import com.sss.michael.exo.callback.ExoGestureEnable;
 import com.sss.michael.exo.callback.IExoControlComponent;
@@ -21,6 +22,7 @@ import com.sss.michael.exo.callback.IExoFFTCallBack;
 import com.sss.michael.exo.callback.IExoGestureCallBack;
 import com.sss.michael.exo.callback.IExoLifecycle;
 import com.sss.michael.exo.callback.IExoNotifyCallBack;
+import com.sss.michael.exo.callback.IExoPcmStreamController;
 import com.sss.michael.exo.callback.IExoScaleCallBack;
 import com.sss.michael.exo.component.ExoComponentCompleteView;
 import com.sss.michael.exo.component.ExoComponentDebugControlView;
@@ -40,11 +42,14 @@ import com.sss.michael.exo.constant.ExoCoreScale;
 import com.sss.michael.exo.constant.ExoEqualizerPreset;
 import com.sss.michael.exo.constant.ExoPlayMode;
 import com.sss.michael.exo.core.ExoPlayerInfo;
+import com.sss.michael.exo.core.ExoPcmStreamCore;
 import com.sss.michael.exo.core.ExoVideoView;
 import com.sss.michael.exo.helper.ExoGestureHelper;
 import com.sss.michael.exo.helper.ExoScaleHelper;
 import com.sss.michael.exo.util.ExoDensityUtil;
+import com.sss.michael.exo.util.ExoLog;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -56,6 +61,7 @@ import java.util.List;
 public class SimpleExoPlayerView extends FrameLayout
         implements TextureView.SurfaceTextureListener,
         IExoController,
+        IExoPcmStreamController,
         IExoGestureCallBack,
         IExoLifecycle,
         IExoFFTCallBack,
@@ -63,7 +69,9 @@ public class SimpleExoPlayerView extends FrameLayout
         IExoScaleCallBack {
 
     private final ExoControllerWrapper exoControllerWrapper;
-    private ExoVideoView exoCore;
+    private final ExoVideoView exoCore;
+    private final ExoPcmStreamCore exoPcmStreamCore;
+    private final ExoPlayerInfo pcmPlayerInfo = new ExoPlayerInfo();
     private final TextureView textureView;
     private Surface currentSurface;
     // 手势处理类
@@ -76,6 +84,8 @@ public class SimpleExoPlayerView extends FrameLayout
     private IExoGestureCallBack iExoGestureCallBack;
     private IExoNotifyCallBack iExoNotifyCallBack;
     private IExoFFTCallBack iExoFFTCallBack;
+    private boolean pcmStreamMode;
+    private ExoEqualizerPreset currentEqualizerPreset = ExoEqualizerPreset.CUSTOM;
 
     public SimpleExoPlayerView(@NonNull Context context) {
         this(context, null);
@@ -92,7 +102,8 @@ public class SimpleExoPlayerView extends FrameLayout
         addView(textureView);
         textureView.setSurfaceTextureListener(this);
         exoCore = new ExoVideoView(context, this, this);
-        exoControllerWrapper = new ExoControllerWrapper(exoCore, this);
+        exoPcmStreamCore = new ExoPcmStreamCore(context, this, pcmPlayerInfo, this);
+        exoControllerWrapper = new ExoControllerWrapper(this, this);
         textureView.setOpaque(false);
         exoGestureHelper = new ExoGestureHelper(textureView, context,
                 new ExoGestureEnable()
@@ -108,6 +119,7 @@ public class SimpleExoPlayerView extends FrameLayout
                 return exoCore.getPlayerView();
             }
         };
+        pcmPlayerInfo.setExoPlayMode(ExoPlayMode.MUSIC);
         setScaleMode(ExoCoreScale.SCALE_AUTO);
 
     }
@@ -214,7 +226,7 @@ public class SimpleExoPlayerView extends FrameLayout
         // 播放错误
         ExoComponentErrorView exoComponentErrorView = new ExoComponentErrorView(getContext());
         addControlComponent(exoComponentErrorView);
-        ExoPlayMode mode = exoCore.getExoPlayerInfo().getExoPlayMode();
+        ExoPlayMode mode = getExoPlayerInfo().getExoPlayMode();
         if (ExoPlayMode.LIVE == mode || ExoPlayMode.VOD == mode) {
             if (ExoPlayMode.LIVE == mode) {
                 // 直播控制栏
@@ -310,8 +322,12 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void setEqualizer(@NonNull ExoEqualizerPreset exoEqualizerPreset) {
+        currentEqualizerPreset = exoEqualizerPreset;
         if (exoCore != null) {
             exoCore.setEqualizer(exoEqualizerPreset);
+        }
+        if (exoPcmStreamCore != null) {
+            exoPcmStreamCore.setEqualizer(exoEqualizerPreset);
         }
     }
 
@@ -320,6 +336,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void rePlay() {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持 rePlay，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.rePlay();
         }
@@ -331,6 +351,14 @@ public class SimpleExoPlayerView extends FrameLayout
      * @param playWhenReady true准备好后开始播放
      */
     public void setPlayWhenReady(boolean playWhenReady) {
+        if (isPcmStreamMode()) {
+            if (playWhenReady) {
+                exoPcmStreamCore.resume();
+            } else {
+                exoPcmStreamCore.pause(false);
+            }
+            return;
+        }
         if (exoCore != null) {
             exoCore.setPlayWhenReady(playWhenReady);
         }
@@ -345,6 +373,7 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void play(ExoPlayMode mode, long lastPlayTime, String url) {
+        exitPcmStreamModeIfNeeded();
         if (exoCore != null) {
             exoCore.play(mode, lastPlayTime, url);
         }
@@ -356,6 +385,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void reset() {
+        if (isPcmStreamMode()) {
+            cancelPcmStream();
+            return;
+        }
         if (exoCore != null) {
             exoCore.reset();
         }
@@ -367,6 +400,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void refresh() {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持 refresh，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.refresh();
         }
@@ -379,6 +416,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void pause(boolean callFromActive) {
+        if (isPcmStreamMode()) {
+            exoPcmStreamCore.pause(callFromActive);
+            return;
+        }
         if (exoCore != null) {
             exoCore.pause(callFromActive);
         }
@@ -389,6 +430,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void resume() {
+        if (isPcmStreamMode()) {
+            exoPcmStreamCore.resume();
+            return;
+        }
         if (exoCore != null) {
             exoCore.resume();
         }
@@ -400,6 +445,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void stop() {
+        if (isPcmStreamMode()) {
+            cancelPcmStream();
+            return;
+        }
         if (exoCore != null) {
             exoCore.stop();
         }
@@ -412,6 +461,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public boolean isPlaying() {
+        if (isPcmStreamMode()) {
+            return exoPcmStreamCore != null && exoPcmStreamCore.isPlaying();
+        }
         return exoCore != null && exoCore.isPlaying();
     }
 
@@ -422,6 +474,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public long getDuration() {
+        if (isPcmStreamMode()) {
+            return exoPcmStreamCore == null ? 0 : exoPcmStreamCore.getDuration();
+        }
         return exoCore == null ? 0 : exoCore.getDuration();
     }
 
@@ -432,6 +487,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void seekTo(long positionMs) {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持 seekTo，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.seekTo(positionMs);
         }
@@ -444,6 +503,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public long getCurrentPosition() {
+        if (isPcmStreamMode()) {
+            return exoPcmStreamCore == null ? 0 : exoPcmStreamCore.getCurrentPosition();
+        }
         return exoCore == null ? 0 : exoCore.getCurrentPosition();
     }
 
@@ -454,6 +516,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void setScaleMode(int mode) {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持缩放模式，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.setScaleMode(mode);
         }
@@ -469,6 +535,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public int getScaleMode() {
+        if (isPcmStreamMode()) {
+            return ExoCoreScale.SCALE_AUTO;
+        }
         return exoCore == null ? 0 : exoCore.getScaleMode();
     }
 
@@ -479,6 +548,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void setSpeed(float speed) {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持倍速播放，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.setSpeed(speed);
         }
@@ -491,6 +564,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public float getSpeed() {
+        if (isPcmStreamMode()) {
+            return 1.0f;
+        }
         return exoCore == null ? 0 : exoCore.getSpeed();
     }
 
@@ -501,6 +577,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void startFullScreen(boolean callFromActive) {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持全屏播放，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.startFullScreen(callFromActive);
         }
@@ -513,6 +593,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void stopFullScreen(boolean callFromActive) {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持退出全屏，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.stopFullScreen(callFromActive);
         }
@@ -525,6 +609,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public boolean isFullScreen() {
+        if (isPcmStreamMode()) {
+            return false;
+        }
         return exoCore != null && exoCore.isFullScreen();
     }
 
@@ -535,6 +622,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public ExoPlayerInfo getExoPlayerInfo() {
+        if (isPcmStreamMode()) {
+            return pcmPlayerInfo;
+        }
         return exoCore == null ? new ExoPlayerInfo() : exoCore.getExoPlayerInfo();
     }
 
@@ -546,9 +636,110 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void setExperienceTime(long experienceTimeMs) {
+        if (isPcmStreamMode()) {
+            ExoLog.log("PCM 流模式暂不支持试看时长，调用已忽略");
+            return;
+        }
         if (exoCore != null) {
             exoCore.setExperienceTime(experienceTimeMs);
         }
+    }
+
+    /**
+     * 启动新的 PCM 流式播放会话。
+     *
+     * <p>调用后当前 View 会切换到 PCM 模式，先回收正在运行的 URL 播放状态，再初始化独立的
+     * AudioTrack 流式链路，并同步应用当前选中的均衡器预设，使流式链路与 ExoPlayer 主链保持
+     * 一致的听感行为。
+     *
+     * @param config 本次 PCM 会话配置
+     */
+    @Override
+    public void startPcmStream(ExoPcmStreamConfig config) {
+        // PCM 模式与 URL/MediaSource 模式共用同一个对外 View 门面。切换模式前先回收 URL
+        // 播放状态，避免 ExoPlayer 旧回调和视频态残留到本次纯音频流式会话中。
+        prepareForPcmStreamMode();
+        pcmStreamMode = true;
+        exoPcmStreamCore.startPcmStream(config);
+        exoPcmStreamCore.setEqualizer(currentEqualizerPreset);
+    }
+
+    /**
+     * 以 {@link java.nio.ByteBuffer} 形式向当前 PCM 会话追加数据。
+     *
+     * @param buffer 存放 PCM 16-bit 音频数据的缓冲区
+     */
+    @Override
+    public void appendPcmData(ByteBuffer buffer) {
+        if (!isPcmStreamMode()) {
+            ExoLog.log("当前并未处于 PCM 流模式，appendPcmData(ByteBuffer) 调用已忽略");
+            return;
+        }
+        if (buffer == null || !buffer.hasRemaining()) {
+            return;
+        }
+        ByteBuffer bufferCopy = buffer.slice();
+        byte[] pcmBytes = new byte[bufferCopy.remaining()];
+        bufferCopy.get(pcmBytes);
+        exoPcmStreamCore.appendPcmData(pcmBytes, 0, pcmBytes.length);
+    }
+
+    /**
+     * 以字节数组形式向当前 PCM 会话追加数据。
+     *
+     * @param data PCM 16-bit 音频数据
+     * @param offset 源数据偏移
+     * @param length 需要追加的 PCM 字节数
+     */
+    @Override
+    public void appendPcmData(byte[] data, int offset, int length) {
+        if (!isPcmStreamMode()) {
+            ExoLog.log("当前并未处于 PCM 流模式，appendPcmData(byte[]) 调用已忽略");
+            return;
+        }
+        exoPcmStreamCore.appendPcmData(data, offset, length);
+    }
+
+    /**
+     * 声明当前 PCM 输入已经结束。
+     */
+    @Override
+    public void completePcmStream() {
+        if (!isPcmStreamMode()) {
+            ExoLog.log("当前并未处于 PCM 流模式，completePcmStream 调用已忽略");
+            return;
+        }
+        exoPcmStreamCore.completePcmStream();
+    }
+
+    /**
+     * 立即取消当前 PCM 会话并退出 PCM 模式。
+     */
+    @Override
+    public void cancelPcmStream() {
+        if (!pcmStreamMode) {
+            return;
+        }
+        // 先切换门面分发状态，再撤销底层 PCM 会话。这样业务层取消后即使立刻调用普通控制
+        // API，也不会误打到一个正在销毁的 AudioTrack 会话上。
+        pcmStreamMode = false;
+        exoPcmStreamCore.cancelPcmStream();
+    }
+
+    /**
+     * 返回当前播放器是否由 PCM 流式链路接管控制。
+     */
+    @Override
+    public boolean isPcmStreaming() {
+        return isPcmStreamMode();
+    }
+
+    /**
+     * 返回独立流式队列中当前已缓冲 PCM 数据的预计时长。
+     */
+    @Override
+    public long getQueuedPcmDurationMs() {
+        return !isPcmStreamMode() || exoPcmStreamCore == null ? 0 : exoPcmStreamCore.getQueuedPcmDurationMs();
     }
 
 
@@ -560,6 +751,9 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void windowFocusChanged(boolean hasWindowFocus) {
+        if (isPcmStreamMode()) {
+            return;
+        }
         if (exoCore != null) {
             exoCore.windowFocusChanged(hasWindowFocus);
         }
@@ -611,7 +805,7 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void onProgressChange(long current, long total, long seekTo) {
-        if (exoCore != null) {
+        if (!isPcmStreamMode() && exoCore != null) {
             exoCore.seekTo(seekTo);
         }
         for (IExoControlComponent component : mControlComponents) {
@@ -842,6 +1036,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void onPause() {
+        if (isPcmStreamMode()) {
+            exoPcmStreamCore.pause(false);
+            return;
+        }
         if (exoCore != null) {
             exoCore.onPause();
         }
@@ -852,6 +1050,10 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void onResume() {
+        if (isPcmStreamMode()) {
+            exoPcmStreamCore.resume();
+            return;
+        }
         if (exoCore != null) {
             exoCore.onResume();
         }
@@ -863,9 +1065,12 @@ public class SimpleExoPlayerView extends FrameLayout
      */
     @Override
     public void release() {
+        pcmStreamMode = false;
+        if (exoPcmStreamCore != null) {
+            exoPcmStreamCore.release();
+        }
         if (exoCore != null) {
             exoCore.release();
-            exoCore = null;
         }
         if (currentSurface != null) {
             currentSurface.release();
@@ -878,6 +1083,38 @@ public class SimpleExoPlayerView extends FrameLayout
         if (exoScaleHelper != null) {
             exoScaleHelper.release();
             exoScaleHelper = null;
+        }
+    }
+
+    /**
+     * 返回当前对外控制面是否应路由到独立 PCM 链路。
+     */
+    private boolean isPcmStreamMode() {
+        return pcmStreamMode && exoPcmStreamCore != null && exoPcmStreamCore.isStreaming();
+    }
+
+    /**
+     * 当 URL 播放即将接管时退出 PCM 模式。
+     */
+    private void exitPcmStreamModeIfNeeded() {
+        if (!pcmStreamMode) {
+            return;
+        }
+        pcmStreamMode = false;
+        exoPcmStreamCore.cancelPcmStream();
+    }
+
+    /**
+     * 在进入 PCM 模式前清理不再适用的视频播放状态。
+     */
+    private void prepareForPcmStreamMode() {
+        if (exoCore != null) {
+            if (exoCore.isFullScreen()) {
+                exoCore.stopFullScreen(false);
+            }
+            // PCM v1 不承接视频画面、seek、倍速和全屏等能力，因此进入流模式前直接把 URL
+            // 主链收拢到基础空闲态，再由独立的 AudioTrack 核心接管后续控制。
+            exoCore.reset();
         }
     }
     // </editor-fold>

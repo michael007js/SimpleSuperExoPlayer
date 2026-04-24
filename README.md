@@ -82,6 +82,7 @@ binding.simplePlayer.setPlayLocationLastTime("上次播放至"); // 断点续播
 |          `ExoGestureEnable`          |   类   |             控制各类手势的禁用状态              |
 |        `IExoControlComponent`        |  接口  |         定义播放控制 UI 组件的核心规范          |
 |           `IExoController`           |  接口  |     播放器核心控制，解耦 UI 与底层播放逻辑      |
+|      `IExoPcmStreamController`       |  接口  |   面向 PCM 推流场景的独立控制面，不污染 URL 播放语义   |
 |          `IExoFFTCallBack`           |  接口  |            回调音频 FFT 频谱相关数据            |
 |        `IExoGestureCallBack`         |  接口  |              回调所有手势交互事件               |
 |           `IExoLifecycle`            |  接口  |           回调播放器生命周期相关事件            |
@@ -90,6 +91,101 @@ binding.simplePlayer.setPlayLocationLastTime("上次播放至"); // 断点续播
 |         `IExoPlayerListener`         | 抽象类 |         封装 ExoPlayer 底层所有回调事件         |
 |         `IExoScaleCallBack`          |  接口  |             控制播放器缩放相关操作              |
 | `OnExoVideoPlayRecyclerViewCallBack` |  接口  | 回调短视频列表 ExoVideoPlayRecyclerView交互事件 |
+
+### PCM 流式播放
+
+`play(mode, lastPlayTime, url)` 仍然是库内原有的 URL / `MediaSource` 播放主链，本次新增的是一条独立的 PCM 流式播放链路，适用于 TTS、边下发边播的语音流以及业务层自己持有原始 PCM 数据的场景。
+
+PCM 模式的设计原则：
+
+- 独立于 `IExoController` 语义，流式能力通过 `IExoPcmStreamController` 单独暴露。
+- 底层使用 `AudioTrack.MODE_STREAM`，不会阻塞上游音频回调线程。
+- 继续复用现有频谱和均衡器处理器，所以 PCM 模式下频谱组件、EQ 面板仍然可用。
+- PCM v1 仅支持 `PCM_16BIT` 输入，不负责 mp3/aac/opus 解码。
+- PCM 模式下暂不支持 `seekTo`、`refresh`、`rePlay`、倍速、全屏和视频手势，这些调用会被安全忽略并记录日志。
+
+#### ExoPcmStreamConfig
+
+`ExoPcmStreamConfig` 用于描述一次 PCM 会话的固定格式与缓冲策略，当前包含以下字段：
+
+- `sampleRateHz`
+- `channelCount`
+- `encoding`
+- `bufferSizeInBytes`
+- `audioUsage`
+- `contentType`
+- `maxQueuedDurationMs`
+
+默认值：
+
+- `sampleRateHz = 16000`
+- `channelCount = 1`
+- `encoding = AudioFormat.ENCODING_PCM_16BIT`
+- `bufferSizeInBytes = minBufferSize * 2`
+- `audioUsage = AudioAttributes.USAGE_MEDIA`
+- `contentType = AudioAttributes.CONTENT_TYPE_SPEECH`
+- `maxQueuedDurationMs = 5000`
+
+#### 最小可用示例
+
+```java
+SimpleExoPlayerView playerView = findViewById(R.id.simple_player);
+playerView.useDefaultComponents();
+
+ExoPcmStreamConfig config = new ExoPcmStreamConfig()
+        .setSampleRateHz(16000)
+        .setChannelCount(1)
+        .setEncoding(AudioFormat.ENCODING_PCM_16BIT);
+
+playerView.startPcmStream(config);
+
+// 业务层在收到一段 PCM 数据后持续推入播放器
+playerView.appendPcmData(pcmBytes, 0, pcmBytes.length);
+
+// 数据全部送达后，通知播放器把剩余缓冲播放完成
+playerView.completePcmStream();
+```
+
+#### 腾讯云 TTS 接入方式示例
+
+播放器只接收 PCM 数据，不依赖腾讯云 SDK。本库建议业务层在自己的 TTS 回调里做一层适配：
+
+```java
+SimpleExoPlayerView playerView = findViewById(R.id.simple_player);
+
+ExoPcmStreamConfig config = new ExoPcmStreamConfig()
+        .setSampleRateHz(16000)
+        .setChannelCount(1)
+        .setEncoding(AudioFormat.ENCODING_PCM_16BIT);
+
+playerView.startPcmStream(config);
+
+// 伪代码：这里的 callback 来自业务层自己的腾讯云 TTS 封装
+ttsCallback = new TtsCallback() {
+    @Override
+    public void onAudioResult(ByteBuffer audioBuffer) {
+        playerView.appendPcmData(audioBuffer);
+    }
+
+    @Override
+    public void onSynthesisEnd() {
+        playerView.completePcmStream();
+    }
+
+    @Override
+    public void onError(Throwable throwable) {
+        playerView.cancelPcmStream();
+    }
+};
+```
+
+#### 行为说明
+
+- `pause()` / `resume()` 在 PCM 模式下会直接暂停和恢复 `AudioTrack`。
+- `setEqualizer(...)` 会同时作用于 URL 主链和 PCM 流式链路，保证 UI 行为一致。
+- `IExoFFTCallBack`、`ExoComponentSpectrumView` 在 PCM 模式下仍会持续收到频谱数据。
+- `getQueuedPcmDurationMs()` 可用于观察当前排队待播时长，帮助业务层做限流和调试。
+- 如果队列超过 `maxQueuedDurationMs`，播放器会回调错误并丢弃超限分片，避免持续堆积导致内存风险。
 
 ## 🏗️ 架构设计
 
@@ -176,6 +272,14 @@ binding.simplePlayer.play(ExoPlayMode.VOD, 0/*断点续播进度，0从头开始
 binding.simplePlayer.setPlayLocationLastTime("上次播放");
 //使用默认交互组件，可热插拔自定义
 binding.simplePlayer.useDefaultComponents();
+
+// PCM 流式播放示例
+binding.simplePlayer.startPcmStream(new ExoPcmStreamConfig()
+        .setSampleRateHz(16000)
+        .setChannelCount(1)
+        .setEncoding(AudioFormat.ENCODING_PCM_16BIT));
+binding.simplePlayer.appendPcmData(pcmBytes, 0, pcmBytes.length);
+binding.simplePlayer.completePcmStream();
 
 ```
 

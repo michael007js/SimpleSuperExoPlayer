@@ -94,6 +94,14 @@ public class ExoPlayerInfo {
      */
     private Rect videoInScreenRect = new Rect();
     private boolean isFullScreen;
+    /**
+     * 当前播放链路的音频来源类型：URL/MediaSource 或外部 PCM 流。
+     */
+    private int audioSourceType;
+    /**
+     * 当前尚未送入底层音频设备的 PCM 排队时长。
+     */
+    private long queuedPcmDurationMs;
 
     public int getCurrentRetryCountWhileFail() {
         return currentRetryCountWhileFail;
@@ -280,5 +288,21 @@ public class ExoPlayerInfo {
 
     public void setVideoInScreenRect(Rect videoInScreenRect) {
         this.videoInScreenRect = videoInScreenRect;
+    }
+
+    public int getAudioSourceType() {
+        return audioSourceType;
+    }
+
+    public void setAudioSourceType(int audioSourceType) {
+        this.audioSourceType = audioSourceType;
+    }
+
+    public long getQueuedPcmDurationMs() {
+        return queuedPcmDurationMs;
+    }
+
+    public void setQueuedPcmDurationMs(long queuedPcmDurationMs) {
+        this.queuedPcmDurationMs = queuedPcmDurationMs;
     }
 }

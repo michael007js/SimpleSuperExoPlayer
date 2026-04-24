@@ -35,20 +35,11 @@ public class ExoPreloadHelper {
 
     private ExoPreloadHelper(Context context, ExoCacheConfig cacheConfig) {
         if (context.getApplicationContext() != context) {
-            throw new IllegalArgumentException("禁止传入页面级 Context（Activity/Fragment/View），请传入 Application Context");
+            throw new IllegalArgumentException("Application context is required.");
         }
         this.mContextRef = new WeakReference<>(context.getApplicationContext());
         this.mCacheConfig = cacheConfig != null ? cacheConfig : ExoCacheConfig.getDefaultConfig();
-        // 替换为可配置的ThreadPoolExecutor（避免队列积压）
-        BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>(10); // 有限队列，避免内存溢出
-        this.mExecutorService = new ThreadPoolExecutor(
-                mCacheConfig.getCoreThreadCount(),
-                mCacheConfig.getMaxThreadCount(),
-                60, // 空闲线程超时时间
-                TimeUnit.SECONDS,
-                workQueue,
-                new ThreadPoolExecutor.DiscardPolicy() // 队列满时丢弃新任务，避免OOM
-        );
+        this.mExecutorService = createExecutor(mCacheConfig);
     }
 
     /**
@@ -69,42 +60,28 @@ public class ExoPreloadHelper {
         return instance;
     }
 
-    public void updateCacheConfig(ExoCacheConfig newConfig) {
-        if (newConfig != null) {
-            this.mCacheConfig = newConfig;
-            // 重建线程池
-            shutdownExecutor();
-            BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>(10);
-            this.mExecutorService = new ThreadPoolExecutor(
-                    mCacheConfig.getCoreThreadCount(),
-                    mCacheConfig.getMaxThreadCount(),
-                    60,
-                    TimeUnit.SECONDS,
-                    workQueue,
-                    new ThreadPoolExecutor.DiscardPolicy() {
-
-                        @Override
-                        public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
-                            ExoLog.log("预加载任务队列已满，丢弃任务: " + r.getClass().getSimpleName() +
-                                    "，当前队列大小: " + e.getQueue().size() +
-                                    "，活跃线程数: " + e.getActiveCount());
-                            super.rejectedExecution(r, e);
-                        }
-
-                    }
-            );
-        }
-    }
-
-    private Context getContext() {
-        return mContextRef.get();
-    }
-
     /**
      * 简化获取单例（使用默认配置）
      */
     public static ExoPreloadHelper getInstance(Context context) {
         return getInstance(context, null);
+    }
+
+    /**
+     * 更新缓存配置并重建执行器
+     */
+    public synchronized void updateCacheConfig(ExoCacheConfig newConfig) {
+        if (newConfig == null) {
+            return;
+        }
+        this.mCacheConfig = newConfig;
+        // 重建线程池
+        shutdownExecutor();
+        this.mExecutorService = createExecutor(mCacheConfig);
+    }
+
+    private Context getContext() {
+        return mContextRef.get();
     }
 
     /**
@@ -117,23 +94,27 @@ public class ExoPreloadHelper {
     /**
      * 更新预加载队列
      */
-    public void resumePreload(List<String> urls) {
+    public synchronized void resumePreload(List<String> urls) {
         if (urls == null || urls.isEmpty()) {
-            ExoLog.log("预加载终止：urls为空");
+            ExoLog.log("Skip preload: urls is empty");
             return;
         }
         Context context = getContext();
         if (context == null) {
-            ExoLog.log("预加载终止：上下文context为空");
+            ExoLog.log("Skip preload: context is null");
             return;
         }
         if (ExoCacheManager.getConfig().getCacheDir() == null) {
-            ExoLog.log("预加载终止：缓存目录未配置，请在 Application 中初始化");
+            ExoLog.log("Skip preload: cache dir is not configured");
             return;
         }
+
+        // 如果执行器已经被销毁，则在真正派发任务前重新创建
+        ensureExecutor();
+
         // 网络适配：仅WiFi下开启预加载
         if (!ExoNetworkUtil.isWifiConnected(context)) {
-            ExoLog.log("非WiFi网络，不执行预加载");
+            ExoLog.log("Skip preload: wifi is unavailable");
             stopAll();
             return;
         }
@@ -142,7 +123,7 @@ public class ExoPreloadHelper {
         int actualMaxTaskCount = mCacheConfig.getMaxPreloadTaskCount();
         if (ExoNetworkUtil.isNetworkPoor(context)) {
             actualMaxTaskCount = Math.max(1, actualMaxTaskCount / 2); // 网络差时任务数减半
-            ExoLog.log("网络质量较差，预加载最大并行任务数调整为: " + actualMaxTaskCount);
+            ExoLog.log("Poor network detected, reduce max preload tasks to " + actualMaxTaskCount);
         }
 
         // 清理过期任务
@@ -152,7 +133,7 @@ public class ExoPreloadHelper {
             if (!urls.contains(entry.getKey())) {
                 entry.getValue().cancel();
                 iterator.remove();
-                ExoLog.log("停止过期预加载: " + entry.getKey());
+                ExoLog.log("Stop outdated preload task: " + entry.getKey());
             }
         }
 
@@ -163,7 +144,7 @@ public class ExoPreloadHelper {
             }
             // 缓存命中判断：已缓存完成，跳过预加载
             if (ExoCacheManager.isCacheCompleted(context, url)) {
-                ExoLog.log("缓存命中，跳过加载/下载: " + url);
+                ExoLog.log("Cache hit, skip preload: " + url);
                 // 回调缓存完成状态
                 if (mGlobalPreloadCallback != null) {
                     mGlobalPreloadCallback.onPreloadSuccess(url);
@@ -176,39 +157,33 @@ public class ExoPreloadHelper {
             }
             // 控制最大并行任务数
             if (mPreloadTasks.size() >= actualMaxTaskCount) {
-                ExoLog.log("已达最大并行预加载任务数，停止添加新任务");
+                ExoLog.log("Skip new preload task: max concurrent task count reached");
                 break;
             }
 
-            // 创建预加载任务
-            PreloadTask task = new PreloadTask(
-                    url,
-                    ExoCacheManager.getCacheDataSourceFactory(context),
-                    mExecutorService,
-                    mCacheConfig,
-                    mGlobalPreloadCallback
-            );
+            // 创建预加载任务，并在任务终态时自动从运行中任务列表移除
+            PreloadTask task = createTrackedTask(context, url, mGlobalPreloadCallback);
             mPreloadTasks.put(url, task);
             task.execute();
-            ExoLog.log("启动新预加载任务: " + url);
+            ExoLog.log("Start preload task: " + url);
         }
     }
 
     /**
      * 停止所有预加载任务
      */
-    public void stopAll() {
+    public synchronized void stopAll() {
         for (PreloadTask task : mPreloadTasks.values()) {
             task.cancel();
         }
         mPreloadTasks.clear();
-        ExoLog.log("已停止所有预加载任务");
+        ExoLog.log("Stopped all preload tasks");
     }
 
     /**
      * 停止单个URL的预加载
      */
-    public void stopPreload(String url) {
+    public synchronized void stopPreload(String url) {
         if (TextUtils.isEmpty(url)) {
             return;
         }
@@ -216,14 +191,17 @@ public class ExoPreloadHelper {
         if (task != null) {
             task.cancel();
             mPreloadTasks.remove(url);
-            ExoLog.log("已停止预加载: " + url);
+            ExoLog.log("Stopped preload task: " + url);
         }
     }
 
     /**
      * 关闭线程池
      */
-    public void shutdownExecutor() {
+    public synchronized void shutdownExecutor() {
+        if (mExecutorService == null) {
+            return;
+        }
         mExecutorService.shutdown();
         try {
             if (!mExecutorService.awaitTermination(1, TimeUnit.SECONDS)) {
@@ -231,6 +209,100 @@ public class ExoPreloadHelper {
             }
         } catch (InterruptedException e) {
             mExecutorService.shutdownNow();
+            Thread.currentThread().interrupt();
         }
+        mExecutorService = null;
+    }
+
+    /**
+     * 任务结束时回收任务引用，保证任务表只保存“仍在运行中的任务”
+     */
+    private synchronized void onTaskFinished(String url, PreloadTask task) {
+        if (mPreloadTasks.get(url) == task) {
+            mPreloadTasks.remove(url);
+        }
+    }
+
+    /**
+     * 确保执行器可用，避免单例在上一次释放后复用到已关闭的线程池
+     */
+    private void ensureExecutor() {
+        if (mExecutorService == null || mExecutorService.isShutdown() || mExecutorService.isTerminated()) {
+            mExecutorService = createExecutor(mCacheConfig);
+        }
+    }
+
+    /**
+     * 创建带任务回收能力的预加载任务
+     * 对外仍然复用原有 ExoPreloadCallback，不新增公开回调接口
+     */
+    private PreloadTask createTrackedTask(Context context, String url, ExoPreloadCallback externalCallback) {
+        final PreloadTask[] taskHolder = new PreloadTask[1];
+        ExoPreloadCallback trackedCallback = new ExoPreloadCallback() {
+            @Override
+            public void onPreloadSuccess(String callbackUrl) {
+                onTaskFinished(callbackUrl, taskHolder[0]);
+                if (externalCallback != null) {
+                    externalCallback.onPreloadSuccess(callbackUrl);
+                }
+            }
+
+            @Override
+            public void onPreloadFailed(String callbackUrl, String errorMsg) {
+                onTaskFinished(callbackUrl, taskHolder[0]);
+                if (externalCallback != null) {
+                    externalCallback.onPreloadFailed(callbackUrl, errorMsg);
+                }
+            }
+
+            @Override
+            public void onPreloadProgress(String callbackUrl, long loadedBytes, long totalBytes) {
+                if (externalCallback != null) {
+                    externalCallback.onPreloadProgress(callbackUrl, loadedBytes, totalBytes);
+                }
+            }
+
+            @Override
+            public void onPreloadCanceled(String callbackUrl) {
+                onTaskFinished(callbackUrl, taskHolder[0]);
+                if (externalCallback != null) {
+                    externalCallback.onPreloadCanceled(callbackUrl);
+                }
+            }
+        };
+
+        PreloadTask task = new PreloadTask(
+                url,
+                ExoCacheManager.getCacheDataSourceFactory(context),
+                mExecutorService,
+                mCacheConfig,
+                trackedCallback
+        );
+        taskHolder[0] = task;
+        return task;
+    }
+
+    /**
+     * 创建预加载执行器
+     * 仍然保留有限队列和丢弃策略，避免高并发下任务堆积导致内存膨胀
+     */
+    private ExecutorService createExecutor(ExoCacheConfig cacheConfig) {
+        BlockingQueue<Runnable> workQueue = new LinkedBlockingQueue<>(10); // 有限队列，避免内存溢出
+        return new ThreadPoolExecutor(
+                cacheConfig.getCoreThreadCount(),
+                cacheConfig.getMaxThreadCount(),
+                60, // 空闲线程超时时间
+                TimeUnit.SECONDS,
+                workQueue,
+                new ThreadPoolExecutor.DiscardPolicy() {
+                    @Override
+                    public void rejectedExecution(Runnable r, ThreadPoolExecutor e) {
+                        ExoLog.log("Preload queue is full, discard task: " + r.getClass().getSimpleName()
+                                + ", queueSize=" + e.getQueue().size()
+                                + ", activeCount=" + e.getActiveCount());
+                        super.rejectedExecution(r, e);
+                    }
+                }
+        );
     }
 }

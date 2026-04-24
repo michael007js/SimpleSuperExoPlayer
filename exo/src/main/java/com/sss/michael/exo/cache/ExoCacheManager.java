@@ -45,17 +45,24 @@ public class ExoCacheManager {
         if (sCache == null) {
             ExoCacheConfig config = getConfig();
             File cacheDir = config.getCacheDir();
+            if (cacheDir == null) {
+                throw new IllegalStateException("Cache dir is not configured.");
+            }
 
             // 主动创建缓存目录，提高容错性
             if (!cacheDir.exists()) {
                 boolean isCreated = cacheDir.mkdirs();
                 if (!isCreated) {
-                    ExoLog.log("缓存目录创建失败: " + cacheDir.getAbsolutePath());
+                    ExoLog.log("Failed to create cache dir: " + cacheDir.getAbsolutePath());
                 }
             }
 
             // 使用自定义淘汰器
-            ExpirableLruCacheEvictor evictor = new ExpirableLruCacheEvictor(config.getCacheSize(), config.getCacheExpireTime(), config.getMaxMetadataEntryCount());
+            ExpirableLruCacheEvictor evictor = new ExpirableLruCacheEvictor(
+                    config.getCacheSize(),
+                    config.getCacheExpireTime(),
+                    config.getMaxMetadataEntryCount()
+            );
             sCache = new SimpleCache(cacheDir, evictor, new StandaloneDatabaseProvider(context));
         }
         return sCache;
@@ -82,8 +89,8 @@ public class ExoCacheManager {
         if (TextUtils.isEmpty(url)) {
             return false;
         }
-        if (ExoCacheManager.getConfig().getCacheDir() == null) {
-            ExoLog.log("检查URL是否已缓存，缓存目录未配置，请在 Application 中初始化");
+        if (getConfig().getCacheDir() == null) {
+            ExoLog.log("Skip cache check: cache dir is not configured");
             return false;
         }
         ExoCacheConfig config = getConfig();
@@ -103,7 +110,7 @@ public class ExoCacheManager {
                 totalCacheLength += span.length;
             }
         } catch (Exception e) {
-            ExoLog.log("查询缓存完成状态失败: " + e.getMessage());
+            ExoLog.log("Cache completion query failed: " + e.getMessage());
             return false;
         }
 
@@ -127,7 +134,7 @@ public class ExoCacheManager {
             // 获取该 key 对应的所有 CacheSpan
             NavigableSet<CacheSpan> cacheSpans = cache.getCachedSpans(cacheKey);
             if (cacheSpans == null || cacheSpans.isEmpty()) {
-                ExoLog.log("无该URL的缓存，无需移除: " + cacheKey);
+                ExoLog.log("No cache found for key: " + cacheKey);
                 return;
             }
 
@@ -135,31 +142,39 @@ public class ExoCacheManager {
             for (CacheSpan span : cacheSpans) {
                 cache.removeSpan(span);
             }
-            ExoLog.log("移除单个缓存成功: " + cacheKey);
+            ExoLog.log("Removed cache for key: " + cacheKey);
         } catch (Exception e) {
-            ExoLog.log("移除单个缓存失败: " + e.getMessage());
+            ExoLog.log("Remove cache failed: " + e.getMessage());
         }
     }
 
     /**
      * 清理所有缓存
+     * 优先使用当前配置里的真实缓存目录，避免误删默认目录之外的内容
      */
     public static void clearAllCache(Context context) {
+        ExoCacheConfig config = getConfig();
+        File cacheDir = config.getCacheDir();
+        if (cacheDir == null) {
+            ExoLog.log("Clear cache skipped: cache dir is not configured");
+            return;
+        }
+
         try {
-            SimpleCache cache = getCache(context);
             // 先释放缓存资源
-            cache.release();
-            sCache = null; // 置空，下次获取将重新创建
-            // 递归删除缓存目录
-            File cacheDir = new File(context.getCacheDir(), "exo_preload_cache");
+            if (sCache != null) {
+                sCache.release();
+                sCache = null; // 置空，下次获取将重新创建
+            }
+            // 递归删除真实缓存目录
             boolean isDeleted = deleteDir(cacheDir);
             if (isDeleted) {
-                ExoLog.log("所有缓存清理成功");
+                ExoLog.log("Cleared all cache");
             } else {
-                ExoLog.log("缓存目录删除失败: " + cacheDir.getAbsolutePath());
+                ExoLog.log("Failed to delete cache dir: " + cacheDir.getAbsolutePath());
             }
         } catch (Exception e) {
-            ExoLog.log("清理所有缓存失败: " + e.getMessage());
+            ExoLog.log("Clear cache failed: " + e.getMessage());
         }
     }
 
@@ -185,7 +200,7 @@ public class ExoCacheManager {
                 }
             }
         } catch (Exception e) {
-            ExoLog.log("获取当前缓存大小失败: " + e.getMessage());
+            ExoLog.log("Get current cache size failed: " + e.getMessage());
             totalSize = 0;
         }
 

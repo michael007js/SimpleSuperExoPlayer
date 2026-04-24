@@ -33,5 +33,12 @@ public class DemoActivity extends BaseActivity<ActivityDemoBinding> {
                 startActivity(TtsStreamActivity.class);
             }
         });
+        binding.btnShortVideo.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(ShortVideoActivity.class);
+            }
+        });
+
     }
 }

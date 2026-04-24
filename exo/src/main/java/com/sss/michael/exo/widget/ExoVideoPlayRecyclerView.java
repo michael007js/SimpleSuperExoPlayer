@@ -936,7 +936,6 @@ public class ExoVideoPlayRecyclerView extends FrameLayout implements IExoOnPageC
         }
         if (preloadHelper != null) {
             preloadHelper.stopAll();
-            preloadHelper.shutdownExecutor();
             preloadHelper = null;
         }
         if (recyclerView != null) {

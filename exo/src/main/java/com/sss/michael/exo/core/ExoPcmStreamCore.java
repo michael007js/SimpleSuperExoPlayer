@@ -48,6 +48,26 @@ import java.util.concurrent.atomic.AtomicReference;
 @UnstableApi
 public class ExoPcmStreamCore {
 
+    /**
+     * 在输入已结束但 AudioTrack 仍可能残留硬件缓冲时，轮询实际播放头的时间间隔。
+     *
+     * <p>该值无需过小。PCM 队列已经全部写入 AudioTrack 后，剩余工作只是在等待底层设备把最后一小段
+     * 缓冲真正出声，20ms 的轮询粒度足以覆盖语音播报场景，同时不会给工作线程带来明显空转压力。
+     */
+    private static final long COMPLETION_POLL_INTERVAL_MS = 20L;
+
+    /**
+     * 单个入队 PCM 分片的目标时长。
+     *
+     * <p>腾讯云等流式 TTS SDK 可能一次回调返回较大的 PCM 数据块。如果把整块数据作为一个队列节点交给
+     * worker 线程，那么一次 {@link AudioTrack#write(byte[], int, int)} 可能会阻塞较久，导致暂停、
+     * 恢复、停止等控制命令虽然已经投递到同一条消息队列，却要等当前大块写完才有机会执行。
+     *
+     * <p>这里将输入进一步切成约 40ms 的小片段，让 worker 线程在音频输出过程中更频繁地把执行权还给
+     * Looper，从而显著改善交互控制的响应速度，同时又不会把分片切得过细，避免不必要的调度开销。
+     */
+    private static final long PCM_QUEUE_SLICE_DURATION_MS = 40L;
+
     private enum StreamState {
         IDLE,
         PREPARED,
@@ -147,9 +167,6 @@ public class ExoPcmStreamCore {
             return;
         }
 
-        byte[] pcmChunk = new byte[length];
-        System.arraycopy(data, offset, pcmChunk, 0, length);
-
         synchronized (queueLock) {
             if (streamState == StreamState.CANCELED || streamState == StreamState.COMPLETED) {
                 dispatchError("当前 PCM 会话已经结束，无法继续追加音频数据", null);
@@ -157,17 +174,17 @@ public class ExoPcmStreamCore {
             }
 
             long maxQueuedBytes = durationMsToBytes(currentConfig.getMaxQueuedDurationMs());
-            if (maxQueuedBytes > 0 && queuedBytes + pcmChunk.length > maxQueuedBytes) {
+            if (maxQueuedBytes > 0 && queuedBytes + length > maxQueuedBytes) {
                 // 队列上限按“时长”控制，而不是仅按块数或字节数控制。这样不同采样率和声道
                 // 的会话都能获得一致的背压语义，同时避免 AudioTrack 跟不上时持续堆内存。
                 dispatchError("PCM 队列已达到上限，本次音频分片已被丢弃", null);
-                ExoLog.log("PCM 队列超限，拒绝追加 " + pcmChunk.length + " bytes");
+                ExoLog.log("PCM 队列超限，拒绝追加 " + length + " bytes");
                 return;
             }
 
-            pendingPcmQueue.addLast(pcmChunk);
-            queuedBytes += pcmChunk.length;
-            totalInputBytes += pcmChunk.length;
+            enqueuePcmSlicesLocked(data, offset, length);
+            queuedBytes += length;
+            totalInputBytes += length;
             inputCompleted = false;
             updatePlayerInfoWithQueueStateLocked();
             scheduleDrainLocked();
@@ -303,7 +320,7 @@ public class ExoPcmStreamCore {
         if (currentConfig == null) {
             return 0L;
         }
-        return bytesToDurationMs(totalWrittenBytes);
+        return bytesToDurationMs(getPlayedBytes());
     }
 
     /**
@@ -437,30 +454,36 @@ public class ExoPcmStreamCore {
         }
 
         byte[] pcmChunk = dequeueNextPendingPcmChunk();
-        while (pcmChunk != null) {
-
-            try {
-                // PCM 分片始终先经过复用的音频处理链，再进入 AudioTrack。这样 URL 主链和
-                // 流式主链共享同一套 EQ/频谱能力，行为保持一致。
-                byte[] processedChunk = audioProcessorChain.process(pcmChunk, 0, pcmChunk.length);
-                writeFully(processedChunk);
-                totalWrittenBytes += processedChunk.length;
-
-                if (!firstFrameDispatched) {
-                    firstFrameDispatched = true;
-                    mainHandler.post(iExoNotifyCallBack::onExoRenderedFirstFrame);
-                }
-                streamState = StreamState.PLAYING;
-                dispatchPlaybackState(ExoPlaybackState.STATE_PLAYING);
-                dispatchProgress();
-            } catch (Exception e) {
-                dispatchError("PCM 数据写入 AudioTrack 失败", e);
-                cancelStreamOnWorker();
-                return;
-            }
-            pcmChunk = dequeueNextPendingPcmChunk();
+        if (pcmChunk == null) {
+            handleQueueDrainedOnWorker();
+            return;
         }
-        handleQueueDrainedOnWorker();
+
+        try {
+            // PCM 分片始终先经过复用的音频处理链，再进入 AudioTrack。这样 URL 主链和
+            // 流式主链共享同一套 EQ/频谱能力，行为保持一致。
+            byte[] processedChunk = audioProcessorChain.process(pcmChunk, 0, pcmChunk.length);
+            writeFully(processedChunk);
+            totalWrittenBytes += processedChunk.length;
+
+            if (!firstFrameDispatched) {
+                firstFrameDispatched = true;
+                mainHandler.post(iExoNotifyCallBack::onExoRenderedFirstFrame);
+            }
+            streamState = StreamState.PLAYING;
+            dispatchPlaybackState(ExoPlaybackState.STATE_PLAYING);
+            dispatchProgress();
+        } catch (Exception e) {
+            dispatchError("PCM 数据写入 AudioTrack 失败", e);
+            cancelStreamOnWorker();
+            return;
+        }
+
+        if (hasPendingPcmChunk()) {
+            scheduleDrainOnWorker();
+        } else {
+            handleQueueDrainedOnWorker();
+        }
     }
 
     /**
@@ -481,6 +504,61 @@ public class ExoPcmStreamCore {
             queuedBytes -= pcmChunk.length;
             updatePlayerInfoWithQueueStateLocked();
             return pcmChunk;
+        }
+    }
+
+    /**
+     * 按固定目标时长将原始 PCM 数据切成多个更小的队列节点。
+     *
+     * <p>这里切片的目的不是改变音频内容，而是改善 worker 线程对控制命令的协作式调度能力。
+     * 只要切片边界按 PCM 帧大小对齐，就不会破坏采样点完整性，也不会影响 EQ/FFT 处理链的输入语义。
+     *
+     * @param data 原始 PCM 字节数组
+     * @param offset 起始偏移
+     * @param length 需要入队的总字节数
+     */
+    private void enqueuePcmSlicesLocked(byte[] data, int offset, int length) {
+        int bytesPerFrame = Math.max(1, currentConfig.getBytesPerFrame());
+        int preferredSliceBytes = getPreferredPcmSliceBytes(bytesPerFrame);
+        int cursor = offset;
+        int end = offset + length;
+        while (cursor < end) {
+            int nextSliceSize = Math.min(preferredSliceBytes, end - cursor);
+            int alignedSliceSize = nextSliceSize - (nextSliceSize % bytesPerFrame);
+            if (alignedSliceSize <= 0) {
+                alignedSliceSize = Math.min(bytesPerFrame, end - cursor);
+            }
+            byte[] pcmChunk = new byte[alignedSliceSize];
+            System.arraycopy(data, cursor, pcmChunk, 0, alignedSliceSize);
+            pendingPcmQueue.addLast(pcmChunk);
+            cursor += alignedSliceSize;
+        }
+    }
+
+    /**
+     * 计算单个队列分片建议使用的字节数，并确保结果与 PCM 帧边界对齐。
+     *
+     * @param bytesPerFrame 单帧 PCM 的字节数
+     * @return 单个分片建议字节数，至少为一帧
+     */
+    private int getPreferredPcmSliceBytes(int bytesPerFrame) {
+        long preferredBytes = durationMsToBytes(PCM_QUEUE_SLICE_DURATION_MS);
+        if (preferredBytes <= 0L) {
+            return bytesPerFrame;
+        }
+        int alignedBytes = (int) (preferredBytes - (preferredBytes % bytesPerFrame));
+        return Math.max(bytesPerFrame, alignedBytes);
+    }
+
+    /**
+     * 判断当前是否仍有待播 PCM 分片。
+     *
+     * <p>该方法仅用于 worker 线程在单分片消费模式下决定是否继续追加下一次 drain 调度，
+     * 以便让 pause、cancel 等控制命令有机会在两个音频分片之间插队执行。
+     */
+    private boolean hasPendingPcmChunk() {
+        synchronized (queueLock) {
+            return !pendingPcmQueue.isEmpty();
         }
     }
 
@@ -511,13 +589,36 @@ public class ExoPcmStreamCore {
         if (streamState == StreamState.COMPLETED || streamState == StreamState.CANCELED || streamState == StreamState.RELEASED) {
             return;
         }
+
+        if (!inputCompleted) {
+            return;
+        }
+
+        synchronized (queueLock) {
+            if (queuedBytes > 0) {
+                return;
+            }
+        }
+
+        long pendingPlaybackBytes = Math.max(0L, totalWrittenBytes - getPlayedBytes());
+        if (pendingPlaybackBytes > 0L) {
+            /*
+             * “队列已空”只代表数据已经全部写进 AudioTrack，不代表扬声器已经把最后一帧播完。
+             * 如果此时直接 pause/flush，会把仍停留在底层缓冲中的尾音硬切掉，表现为播到句尾或
+             * 某个短语边界就突然结束。这里改为等待真实播放头追平最后写入位置后再转完成态。
+             */
+            workerHandler.postDelayed(this::handleStreamCompletedOnWorker, COMPLETION_POLL_INTERVAL_MS);
+            dispatchProgress();
+            return;
+        }
+
         try {
-            if (audioTrack != null) {
-                audioTrack.pause();
-                audioTrack.flush();
+            if (audioTrack != null && audioTrack.getPlayState() != AudioTrack.PLAYSTATE_STOPPED) {
+                // 自然结束时只停止继续输出，不主动 flush，避免破坏后续调试和状态观测。
+                audioTrack.stop();
             }
         } catch (Exception e) {
-            ExoLog.log("PCM 流结束时刷新 AudioTrack 失败", e);
+            ExoLog.log("PCM 流结束时停止 AudioTrack 失败", e);
         }
         // complete 表示“不再接收新输入，但要把已排队数据正常播完”，因此这里只让底层
         // 设备回到完成态，不主动抹掉本次流会话的统计信息和模式信息。
@@ -664,6 +765,29 @@ public class ExoPcmStreamCore {
         return bytes * 1000L / bytesPerSecond;
     }
 
+    /**
+     * 读取 AudioTrack 当前已经真正播放完成的 PCM 字节数。
+     *
+     * <p>{@link AudioTrack#write(byte[], int, int)} 返回成功只意味着数据已经进入 AudioTrack 或底层音频
+     * 缓冲区，并不代表用户已经听到了这些声音。完成态判定必须依赖播放头，而不能直接复用
+     * {@link #totalWrittenBytes}。
+     *
+     * @return 已经实际播放的字节数；当播放器尚未初始化或系统暂时无法提供播放头时，回退为已写入字节数
+     */
+    private long getPlayedBytes() {
+        if (audioTrack == null || currentConfig == null) {
+            return totalWrittenBytes;
+        }
+        try {
+            long playedFrames = audioTrack.getPlaybackHeadPosition() & 0xFFFFFFFFL;
+            long playedBytes = playedFrames * currentConfig.getBytesPerFrame();
+            return Math.min(totalWrittenBytes, Math.max(0L, playedBytes));
+        } catch (Exception e) {
+            ExoLog.log("读取 AudioTrack 播放头失败，回退到已写入字节数", e);
+            return totalWrittenBytes;
+        }
+    }
+
     private String getPlaybackStateName(int playbackState) {
         switch (playbackState) {
             case ExoPlaybackState.STATE_IDLE:
@@ -693,6 +817,27 @@ public class ExoPcmStreamCore {
             drainScheduled = true;
             workerHandler.post(drainRunnable);
         }
+    }
+
+    /**
+     * 在 worker 线程内为下一段 PCM 分片续约 drain 调度。
+     *
+     * <p>与 {@link #scheduleDrainLocked()} 的区别在于，这里调用方已经位于 worker 线程，不需要也不应该
+     * 再持有外部锁去完成投递。统一复用 {@code drainScheduled} 标记，可以保证“同一时刻最多只有一个
+     * drain runnable 在队列中等待执行”，避免一边持续 append、一边产生多份重复 drain 任务。
+     */
+    private void scheduleDrainOnWorker() {
+        synchronized (queueLock) {
+            if (streamState == StreamState.PAUSED || streamState == StreamState.RELEASED
+                    || streamState == StreamState.CANCELED || streamState == StreamState.COMPLETED) {
+                return;
+            }
+            if (drainScheduled) {
+                return;
+            }
+            drainScheduled = true;
+        }
+        workerHandler.post(drainRunnable);
     }
 
     private void ensureUsable() {

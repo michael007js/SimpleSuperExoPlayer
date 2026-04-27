@@ -45,4 +45,6 @@ dependencies {
     implementation project(':exo')
     testImplementation 'junit:junit:4.12'
 //    implementation 'com.github.michael007js:SimpleSuperExoPlayer:0.0.1'
+    implementation otherDependencies.glide_okhttp3
+    implementation otherDependencies.gson
 }

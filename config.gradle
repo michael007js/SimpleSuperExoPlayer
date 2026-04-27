@@ -43,7 +43,7 @@ ext {
 
     //第三方支持库配置
     otherDependencies = [
-
+            gson                 : "com.google.code.gson:gson:2.8.6",
             eventbus      : "org.greenrobot:eventbus:3.2.0",//EventBus  https://github.com/greenrobot/EventBus
             glide         : "com.github.bumptech.glide:glide:4.11.0",//glide  https://muyangmin.github.io/glide-docs-cn/
             glide_compiler: "com.github.bumptech.glide:compiler:4.11.0",

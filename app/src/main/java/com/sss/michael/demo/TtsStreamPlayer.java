@@ -11,6 +11,9 @@ import androidx.annotation.NonNull;
 
 import com.sss.michael.exo.SimpleExoPlayerView;
 import com.sss.michael.exo.bean.ExoPcmStreamConfig;
+import com.sss.michael.exo.callback.SimpleExoNotifyCallBack;
+import com.sss.michael.exo.constant.ExoPlaybackState;
+import com.sss.michael.exo.component.ExoShortVideoSimpleControlBarView;
 import com.sss.michael.exo.util.ExoLog;
 import com.tencent.cloud.stream.tts.FlowingSpeechSynthesizer;
 import com.tencent.cloud.stream.tts.FlowingSpeechSynthesizerListener;
@@ -90,13 +93,43 @@ public class TtsStreamPlayer {
     private FlowingSpeechSynthesizer synthesizer;
     private Thread synthesizerThread;
     private boolean isPaused;
-    private boolean isStopped = true;
+    /**
+     * 是否已经收到“主动停止 / 销毁 / 失败收尾”指令。
+     *
+     * <p>该标记只用于表示当前会话是否被业务层终止，不再混用为“腾讯云已经结束回包”或“播放器尾缓冲已经播放完毕”。
+     * 之所以要拆开，是因为流式 TTS 存在一个天然的收尾阶段：云端已经不再产生新 PCM，但播放器底层缓冲可能仍在继续出声。
+     * 如果在这个阶段提前把会话直接标记为 stopped，就会把暂停、恢复等控制逻辑错误短路掉。
+     */
+    private boolean stopRequested = true;
+    /**
+     * 是否已经收到腾讯云“合成输入结束”的信号。
+     *
+     * <p>该状态只代表不会再有新的 PCM 分片进入播放器，并不等同于本地已经停止播放。
+     */
+    private boolean synthesisCompleted;
     private OnTtsPlayerCallback onTtsPlayerCallback;
 
     public TtsStreamPlayer(@NonNull Context context, @NonNull SimpleExoPlayerView playerView) {
         this.appContext = context.getApplicationContext();
         this.playerView = playerView;
         this.audioManager = (AudioManager) appContext.getSystemService(Context.AUDIO_SERVICE);
+        this.playerView.setExoNotifyCallBack(new SimpleExoNotifyCallBack() {
+            @Override
+            public void onExoRenderedFirstFrame() {
+            }
+
+            @Override
+            public void onPlaybackStateChanged(int playbackState, String playbackStateName) {
+                if (playbackState == ExoPlaybackState.STATE_ENDED) {
+                    handlePlaybackCompleted();
+                }
+            }
+
+            @Override
+            public void onShortVideoComponentChangedAction(boolean clearScreenMode,
+                                                           ExoShortVideoSimpleControlBarView exoShortVideoSimpleControlBarView) {
+            }
+        });
         this.audioFocusChangeListener = new AudioManager.OnAudioFocusChangeListener() {
             @Override
             public void onAudioFocusChange(int focusChange) {
@@ -105,7 +138,7 @@ public class TtsStreamPlayer {
                 } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
                     onPause();
                 } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
-                    if (isPaused && !isStopped) {
+                    if (isPaused && !stopRequested) {
                         onResume();
                     }
                 }
@@ -134,10 +167,14 @@ public class TtsStreamPlayer {
         playerView.startPcmStream(new ExoPcmStreamConfig()
                 .setSampleRateHz(SAMPLE_RATE_HZ)
                 .setChannelCount(CHANNEL_COUNT)
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT));
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                // demo 默认文案较长，而腾讯云流式 TTS 回包速度通常快于实际播速；这里显式放宽排队时长，
+                // 避免示例在正常网络条件下因为 5 秒默认背压窗口过小而提前丢弃后续音频分片。
+                .setMaxQueuedDurationMs(30_000L));
 
         isPaused = false;
-        isStopped = false;
+        stopRequested = false;
+        synthesisCompleted = false;
         dispatchOnStart();
 
         final List<String> textChunks = splitText(normalizedText);
@@ -152,12 +189,12 @@ public class TtsStreamPlayer {
                     synthesizer = new FlowingSpeechSynthesizer(PROXY, credential, request, listener);
                     synthesizer.start();
                     for (String textChunk : textChunks) {
-                        if (isStopped || Thread.currentThread().isInterrupted()) {
+                        if (stopRequested || Thread.currentThread().isInterrupted()) {
                             break;
                         }
                         synthesizer.process(textChunk);
                     }
-                    if (!isStopped) {
+                    if (!stopRequested) {
                         synthesizer.stop();
                     }
                 } catch (SynthesizerException e) {
@@ -179,7 +216,7 @@ public class TtsStreamPlayer {
      * 不适合长时间挂起。
      */
     public void onPause() {
-        if (isStopped || isPaused) {
+        if (stopRequested || isPaused) {
             return;
         }
         playerView.pause(false);
@@ -191,7 +228,7 @@ public class TtsStreamPlayer {
      * 恢复当前播放。
      */
     public void onResume() {
-        if (isStopped || !isPaused) {
+        if (stopRequested || !isPaused) {
             return;
         }
         playerView.resume();
@@ -247,15 +284,14 @@ public class TtsStreamPlayer {
             @Override
             public void onSynthesisEnd(SpeechSynthesizerResponse response) {
                 ExoLog.log("TtsStream onSynthesisEnd: " + response.getSessionId());
-                isStopped = true;
+                synthesisCompleted = true;
                 playerView.completePcmStream();
-                abandonAudioFocus();
                 dispatchOnEnd();
             }
 
             @Override
             public void onAudioResult(ByteBuffer buffer) {
-                if (isStopped || buffer == null || !buffer.hasRemaining()) {
+                if (stopRequested || buffer == null || !buffer.hasRemaining()) {
                     return;
                 }
                 playerView.appendPcmData(buffer);
@@ -340,18 +376,38 @@ public class TtsStreamPlayer {
     }
 
     /**
-     * 统一处理失败场景。
+     * 统一处理流式合成失败场景。
      *
-     * <p>失败时需要同时停止腾讯云会话、取消播放器当前 PCM 队列、释放音频焦点，并通知 demo UI。
+     * <p>腾讯云 SDK 的异常通常发生在其工作线程中，而播放器停止与 UI 状态回调更适合切回主线程统一收口。
+     * 这样可以避免失败线程先自我中断、再同步等待播放器收尾，进而触发中断异常并放大为崩溃。
+     *
+     * @param errorMessage 需要透出给外层界面的错误信息
      */
     private void handleFailure(String errorMessage) {
-        stopInternal(false);
-        notifyError(errorMessage);
+        mainHandler.post(() -> {
+            stopInternal(false);
+            if (onTtsPlayerCallback != null) {
+                onTtsPlayerCallback.onError(errorMessage);
+            }
+        });
     }
 
+    /**
+     * 停止当前演示任务的合成与播放资源。
+     *
+     * <p>清理顺序必须先完成播放器侧的 PCM 取消，再决定是否中断旧的合成线程。
+     * 如果当前调用线程本身就是合成工作线程，提前执行 {@link Thread#interrupt()} 会让后续
+     * {@link SimpleExoPlayerView#cancelPcmStream()} 内部的阻塞等待立即收到中断，最终把一次正常停止升级成运行时崩溃。
+     *
+     * @param notifyStop 是否向界面派发“主动停止”事件
+     */
     private void stopInternal(boolean notifyStop) {
-        isStopped = true;
+        stopRequested = true;
+        synthesisCompleted = false;
         isPaused = false;
+
+        Thread threadToInterrupt = synthesizerThread;
+        synthesizerThread = null;
 
         if (synthesizer != null) {
             try {
@@ -361,17 +417,35 @@ public class TtsStreamPlayer {
             }
             synthesizer = null;
         }
-        if (synthesizerThread != null) {
-            synthesizerThread.interrupt();
-            synthesizerThread = null;
-        }
 
         playerView.cancelPcmStream();
+
+        // 仅对“其他线程上的旧任务”补发中断，避免当前线程在等待播放器收尾前先把自己打断。
+        if (threadToInterrupt != null && threadToInterrupt != Thread.currentThread()) {
+            threadToInterrupt.interrupt();
+        }
+
         abandonAudioFocus();
 
         if (notifyStop && onTtsPlayerCallback != null) {
             dispatchOnStop();
         }
+    }
+
+    /**
+     * 处理播放器真正进入结束态的收尾逻辑。
+     *
+     * <p>该方法只在 PCM 链路把底层缓冲完全播放完毕后触发，因此适合承接“释放音频焦点、关闭可恢复控制”的职责。
+     * 与 {@link FlowingSpeechSynthesizerListener#onSynthesisEnd(SpeechSynthesizerResponse)} 的区别是：
+     * 前者代表“云端不再产新数据”，而这里代表“本地也已经彻底播放结束”。
+     */
+    private void handlePlaybackCompleted() {
+        if (!synthesisCompleted || stopRequested) {
+            return;
+        }
+        stopRequested = true;
+        isPaused = false;
+        abandonAudioFocus();
     }
 
     private void requestAudioFocus() {

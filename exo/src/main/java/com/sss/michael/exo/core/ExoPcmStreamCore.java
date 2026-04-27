@@ -174,7 +174,8 @@ public class ExoPcmStreamCore {
             }
 
             long maxQueuedBytes = durationMsToBytes(currentConfig.getMaxQueuedDurationMs());
-            if (maxQueuedBytes > 0 && queuedBytes + length > maxQueuedBytes) {
+            long pendingPlaybackBytes = getPendingPlaybackBytes();
+            if (maxQueuedBytes > 0 && pendingPlaybackBytes + length > maxQueuedBytes) {
                 // 队列上限按“时长”控制，而不是仅按块数或字节数控制。这样不同采样率和声道
                 // 的会话都能获得一致的背压语义，同时避免 AudioTrack 跟不上时持续堆内存。
                 dispatchError("PCM 队列已达到上限，本次音频分片已被丢弃", null);
@@ -330,9 +331,7 @@ public class ExoPcmStreamCore {
         if (currentConfig == null) {
             return 0L;
         }
-        synchronized (queueLock) {
-            return bytesToDurationMs(queuedBytes);
-        }
+        return bytesToDurationMs(getPendingPlaybackBytes());
     }
 
     /**
@@ -674,7 +673,7 @@ public class ExoPcmStreamCore {
     }
 
     private void updatePlayerInfoWithQueueStateLocked() {
-        playerInfo.setQueuedPcmDurationMs(bytesToDurationMs(queuedBytes));
+        playerInfo.setQueuedPcmDurationMs(bytesToDurationMs(getPendingPlaybackBytes()));
         mainHandler.post(() -> iExoNotifyCallBack.onPlayerInfoChanged(playerInfo));
     }
 
@@ -786,6 +785,22 @@ public class ExoPcmStreamCore {
             ExoLog.log("读取 AudioTrack 播放头失败，回退到已写入字节数", e);
             return totalWrittenBytes;
         }
+    }
+
+    /**
+     * 返回当前仍处于“尚未真正播出”状态的 PCM 总字节数。
+     *
+     * <p>该值同时覆盖两部分数据：
+     * 1. 仍停留在 Java 队列中的待写 PCM；
+     * 2. 已经写入 AudioTrack，但底层播放头尚未消费完的硬件缓冲。
+     *
+     * <p>对于长文本 TTS，这个指标比单纯的 {@code queuedBytes} 更能反映真实背压压力，
+     * 因为云端回包速度可能快于本地播速，很多音频虽然已经离开队列，却仍然滞留在 AudioTrack 内部等待出声。
+     *
+     * @return 尚未实际播放完成的 PCM 字节数
+     */
+    private long getPendingPlaybackBytes() {
+        return Math.max(0L, totalInputBytes - getPlayedBytes());
     }
 
     private String getPlaybackStateName(int playbackState) {

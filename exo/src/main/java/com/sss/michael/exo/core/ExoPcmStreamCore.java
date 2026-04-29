@@ -77,7 +77,7 @@ public class ExoPcmStreamCore {
      */
     private static final float DEFAULT_PLAYBACK_SPEED = 1.0f;
     private static final float MIN_PLAYBACK_SPEED = 0.25f;
-    private static final float MAX_PLAYBACK_SPEED = 5.0f;
+    private static final float MAX_PLAYBACK_SPEED = 2.0f;
 
     private enum StreamState {
         IDLE,

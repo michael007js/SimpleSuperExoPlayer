@@ -549,7 +549,8 @@ public class SimpleExoPlayerView extends FrameLayout
     @Override
     public void setSpeed(float speed) {
         if (isPcmStreamMode()) {
-            ExoLog.log("PCM 流模式暂不支持倍速播放，调用已忽略");
+            // PCM 流不经过 ExoPlayer 主链，倍速需要直接下发给独立 AudioTrack 播放核心。
+            exoPcmStreamCore.setPlaybackSpeed(speed);
             return;
         }
         if (exoCore != null) {
@@ -565,7 +566,8 @@ public class SimpleExoPlayerView extends FrameLayout
     @Override
     public float getSpeed() {
         if (isPcmStreamMode()) {
-            return 1.0f;
+            // PCM 模式返回独立流式链路保存的倍速，避免误读 ExoPlayer 主链参数。
+            return exoPcmStreamCore.getPlaybackSpeed();
         }
         return exoCore == null ? 0 : exoCore.getSpeed();
     }

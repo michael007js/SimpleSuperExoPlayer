@@ -4,7 +4,9 @@ import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.PlaybackParams;
 import android.media.AudioTrack;
+import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -68,6 +70,15 @@ public class ExoPcmStreamCore {
      */
     private static final long PCM_QUEUE_SLICE_DURATION_MS = 40L;
 
+    /**
+     * PCM AudioTrack 倍速默认值和保护范围。
+     *
+     * <p>这里仅设置 speed，不设置 pitch；腾讯云音色由 TTS 请求的 voiceType 控制。
+     */
+    private static final float DEFAULT_PLAYBACK_SPEED = 1.0f;
+    private static final float MIN_PLAYBACK_SPEED = 0.25f;
+    private static final float MAX_PLAYBACK_SPEED = 5.0f;
+
     private enum StreamState {
         IDLE,
         PREPARED,
@@ -100,6 +111,12 @@ public class ExoPcmStreamCore {
     private long queuedBytes;
     private long totalInputBytes;
     private long totalWrittenBytes;
+    /**
+     * 当前 PCM 流播放倍速。
+     *
+     * <p>volatile 保证 UI 线程设置后，worker 线程构建或更新 AudioTrack 时能读取到最新值。
+     */
+    private volatile float playbackSpeed = DEFAULT_PLAYBACK_SPEED;
 
     public ExoPcmStreamCore(@NonNull Context context,
                             @NonNull View playerView,
@@ -289,6 +306,31 @@ public class ExoPcmStreamCore {
     }
 
     /**
+     * 设置 PCM 流的实时播放倍速。
+     *
+     * @param speed 播放倍速，范围会被限制在 [0.25, 5.0]
+     */
+    public void setPlaybackSpeed(float speed) {
+        float normalizedSpeed = normalizePlaybackValue(speed, DEFAULT_PLAYBACK_SPEED,
+                MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED);
+        if (playbackSpeed == normalizedSpeed) {
+            return;
+        }
+        playbackSpeed = normalizedSpeed;
+        playerInfo.setSpeed(normalizedSpeed);
+        mainHandler.post(() -> iExoNotifyCallBack.onPlayerInfoChanged(playerInfo));
+        if (streamState == StreamState.RELEASED) {
+            return;
+        }
+        // AudioTrack 由 worker 线程独占，实时倍速更新也投递到同一线程执行，避免并发触碰底层实例。
+        workerHandler.post(this::applyPlaybackParametersOnWorker);
+    }
+
+    public float getPlaybackSpeed() {
+        return playbackSpeed;
+    }
+
+    /**
      * 返回独立 PCM 链路当前是否仍处于可继续工作的流式状态。
      */
     public boolean isStreaming() {
@@ -376,6 +418,7 @@ public class ExoPcmStreamCore {
         playerInfo.setAudioSourceType(ExoAudioSourceType.PCM_STREAM);
         playerInfo.setFullScreen(false);
         playerInfo.setUri(null);
+        playerInfo.setSpeed(playbackSpeed);
         dispatchPlayerState(ExoPlayerMode.PLAYER_NORMAL);
         dispatchPlaybackState(ExoPlaybackState.STATE_BUFFERING);
         dispatchProgress();
@@ -419,6 +462,8 @@ public class ExoPcmStreamCore {
             if (audioTrack.getState() != AudioTrack.STATE_INITIALIZED) {
                 throw new IllegalStateException("AudioTrack 初始化失败");
             }
+            // 新建 AudioTrack 后立刻应用当前倍速，否则会短暂按 1.0x 输出。
+            applyPlaybackParameters(audioTrack);
             return audioTrack;
         }
 
@@ -437,7 +482,40 @@ public class ExoPcmStreamCore {
         if (audioTrack.getState() != AudioTrack.STATE_INITIALIZED) {
             throw new IllegalStateException("AudioTrack 初始化失败");
         }
+        // 老版本构造路径同样需要应用当前倍速，保证不同 API 分支行为一致。
+        applyPlaybackParameters(audioTrack);
         return audioTrack;
+    }
+
+    private void applyPlaybackParametersOnWorker() {
+        if (audioTrack == null || streamState == StreamState.RELEASED || streamState == StreamState.CANCELED) {
+            return;
+        }
+        applyPlaybackParameters(audioTrack);
+    }
+
+    private void applyPlaybackParameters(AudioTrack targetAudioTrack) {
+        if (targetAudioTrack == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            // PlaybackParams 从 API 23 开始可用；低版本保持 1.0x 播放，避免引入额外重采样实现。
+            return;
+        }
+        try {
+            // 这里只设置 speed，不设置 pitch，避免把“腾讯云音色”误实现成本地变调。
+            PlaybackParams playbackParams = new PlaybackParams()
+                    .allowDefaults()
+                    .setSpeed(playbackSpeed)
+                    .setAudioFallbackMode(PlaybackParams.AUDIO_FALLBACK_MODE_DEFAULT);
+            targetAudioTrack.setPlaybackParams(playbackParams);
+        } catch (Exception e) {
+            ExoLog.log("PCM 流播放参数设置失败: " + e.getMessage(), e);
+        }
+    }
+
+    private float normalizePlaybackValue(float value, float fallback, float min, float max) {
+        if (Float.isNaN(value) || Float.isInfinite(value) || value <= 0f) {
+            return fallback;
+        }
+        return Math.max(min, Math.min(max, value));
     }
 
     private void drainPendingPcmQueue() {

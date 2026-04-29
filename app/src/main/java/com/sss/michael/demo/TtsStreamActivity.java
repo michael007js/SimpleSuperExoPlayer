@@ -25,6 +25,7 @@ public class TtsStreamActivity extends BaseActivity<ActivityTtsStreamBinding> {
             "你好，这里是 SimpleSuperExoPlayer 的 PCM 流式播放演示。" +
                     "当前示例会把腾讯云流式语音合成返回的 PCM 数据持续推送给播放器。" +
                     "你可以在播放过程中观察频谱变化，并实时拖动均衡器查看声音效果。";
+    private static final int DEFAULT_TENCENT_VOICE_TYPE = 1001;
 
     private SimpleExoPlayerView playerView;
     private TtsStreamPlayer ttsStreamPlayer;
@@ -84,6 +85,10 @@ public class TtsStreamActivity extends BaseActivity<ActivityTtsStreamBinding> {
                 binding.tvStatus.setText("状态：发生错误");
                 Toast.makeText(TtsStreamActivity.this, errorMessage, Toast.LENGTH_SHORT).show();
             }
+
+            @Override
+            public void onPlayingProgressPositionChanged(long currentMs, long durationMs, long bufferedPositionMs, int bufferedPercentage) {
+            }
         });
 
         binding.etInput.setText(DEFAULT_DEMO_TEXT);
@@ -103,6 +108,29 @@ public class TtsStreamActivity extends BaseActivity<ActivityTtsStreamBinding> {
         binding.btnResume.setOnClickListener(v -> ttsStreamPlayer.onResume());
         binding.btnStop.setOnClickListener(v -> ttsStreamPlayer.onStop());
 
+        // 倍速是播放器本地实时能力，切换后会立即作用到当前 PCM 流。
+        binding.rgSpeed.setOnCheckedChangeListener((group, checkedId) -> {
+            if (checkedId == R.id.rb_speed_075) {
+                ttsStreamPlayer.setPlaybackSpeed(0.75f);
+            } else if (checkedId == R.id.rb_speed_15) {
+                ttsStreamPlayer.setPlaybackSpeed(1.5f);
+            } else if (checkedId == R.id.rb_speed_2) {
+                ttsStreamPlayer.setPlaybackSpeed(2.0f);
+            } else {
+                ttsStreamPlayer.setPlaybackSpeed(1.0f);
+            }
+        });
+
+        // 音色使用腾讯云 voiceType。它属于 TTS 合成请求参数，不走播放器本地变声。
+        binding.btnApplyVoiceType.setOnClickListener(v -> {
+            String voiceTypeText = binding.etVoiceType.getText() == null
+                    ? ""
+                    : binding.etVoiceType.getText().toString().trim();
+            int voiceType = parseVoiceTypeOrDefault(voiceTypeText);
+            ttsStreamPlayer.setVoiceType(voiceType);
+            binding.tvStatus.setText("状态：已设置腾讯云音色 voiceType=" + voiceType);
+        });
+
         binding.eq.setOnEqChangeListener(new ExoEqPanelView.OnEqChangeListener() {
             @Override
             public void onBandGainChanged(int band, float gain) {
@@ -115,6 +143,19 @@ public class TtsStreamActivity extends BaseActivity<ActivityTtsStreamBinding> {
                 playerView.setEqualizer(ExoEqualizerPreset.CUSTOM);
             }
         });
+    }
+
+    private int parseVoiceTypeOrDefault(String voiceTypeText) {
+        if (TextUtils.isEmpty(voiceTypeText)) {
+            return DEFAULT_TENCENT_VOICE_TYPE;
+        }
+        try {
+            int voiceType = Integer.parseInt(voiceTypeText);
+            return voiceType > 0 ? voiceType : DEFAULT_TENCENT_VOICE_TYPE;
+        } catch (NumberFormatException e) {
+            Toast.makeText(this, "voiceType 无效，已使用默认音色", Toast.LENGTH_SHORT).show();
+            return DEFAULT_TENCENT_VOICE_TYPE;
+        }
     }
 
     @Override

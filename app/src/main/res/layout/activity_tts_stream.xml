@@ -64,6 +64,89 @@
                 android:text="停止" />
         </LinearLayout>
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="倍速"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+
+            <RadioGroup
+                android:id="@+id/rg_speed"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:orientation="horizontal">
+
+                <RadioButton
+                    android:id="@+id/rb_speed_075"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0.75x" />
+
+                <RadioButton
+                    android:id="@+id/rb_speed_1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:text="1.0x" />
+
+                <RadioButton
+                    android:id="@+id/rb_speed_15"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="1.5x" />
+
+                <RadioButton
+                    android:id="@+id/rb_speed_2"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="2.0x" />
+            </RadioGroup>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="腾讯云音色"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+
+            <EditText
+                android:id="@+id/et_voice_type"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:hint="voiceType，如 1001"
+                android:inputType="number"
+                android:singleLine="true"
+                android:text="1001"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#88FFFFFF" />
+
+            <Button
+                android:id="@+id/btn_apply_voice_type"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:text="应用" />
+        </LinearLayout>
+
         <RadioGroup
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

@@ -6,14 +6,19 @@ import android.media.AudioManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.view.View;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.sss.michael.exo.SimpleExoPlayerView;
 import com.sss.michael.exo.bean.ExoPcmStreamConfig;
+import com.sss.michael.exo.callback.ExoControllerWrapper;
+import com.sss.michael.exo.callback.IExoControlComponent;
 import com.sss.michael.exo.callback.SimpleExoNotifyCallBack;
 import com.sss.michael.exo.component.ExoShortVideoSimpleControlBarView;
 import com.sss.michael.exo.constant.ExoPlaybackState;
+import com.sss.michael.exo.core.ExoPlayerInfo;
 import com.sss.michael.exo.util.ExoLog;
 import com.tencent.cloud.stream.tts.FlowingSpeechSynthesizer;
 import com.tencent.cloud.stream.tts.FlowingSpeechSynthesizerListener;
@@ -26,6 +31,7 @@ import com.tencent.cloud.stream.tts.core.ws.SpeechClient;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -75,6 +81,15 @@ public class TtsStreamPlayer {
      * 默认音色类型，与腾讯云官方 demo 保持一致。
      */
     private static final int DEFAULT_VOICE_TYPE = 1001;
+
+    /**
+     * PCM 本地播放倍速默认值和保护范围。
+     *
+     * <p>倍速是播放器本地能力，不会改变腾讯云返回的 PCM 内容。
+     */
+    private static final float DEFAULT_PLAYBACK_SPEED = 1.0f;
+    private static final float MIN_PLAYBACK_SPEED = 0.25f;
+    private static final float MAX_PLAYBACK_SPEED = 4.0f;
 
     /**
      * 一级分段后允许继续直接提交的最大 UTF-8 字节数。
@@ -128,6 +143,8 @@ public class TtsStreamPlayer {
      */
     private static final long PCM_APPEND_BLOCK_LOW_WATER_MARK_MS = 12_000L;
 
+    private static final long PCM_STREAM_COMPLETE_GRACE_MS = 300L;
+
     /**
      * 匹配“包含有效内容”的字符模式。
      *
@@ -167,15 +184,136 @@ public class TtsStreamPlayer {
      * <p>收到该状态后不再会有新的 PCM 进入播放器，但播放器底层可能仍有待播缓冲。
      */
     private volatile boolean synthesisCompleted;
+    private final Object pcmCompletionLock = new Object();
+    private volatile int activeSessionId;
+    private int pendingAudioCallbacks;
+    private boolean synthesisEndReceived;
+    private boolean pcmStreamCompleted;
+    /**
+     * 当前希望应用到本地 PCM 播放链路的倍速。
+     *
+     * <p>使用 volatile 是为了让 UI 线程更新后，后续新建的 TTS 会话能立即拿到最新配置。
+     */
+    private volatile float playbackSpeed = DEFAULT_PLAYBACK_SPEED;
+    /**
+     * 当前腾讯云 TTS 发音人音色类型。
+     *
+     * <p>该值用于构建 {@link FlowingSpeechSynthesizerRequest}，不是播放器本地变声参数。
+     */
+    private volatile int voiceType = DEFAULT_VOICE_TYPE;
     private OnTtsPlayerCallback onTtsPlayerCallback;
 
     public TtsStreamPlayer(@NonNull Context context, @NonNull SimpleExoPlayerView playerView) {
         this.appContext = context.getApplicationContext();
         this.playerView = playerView;
         this.audioManager = (AudioManager) appContext.getSystemService(Context.AUDIO_SERVICE);
-        this.playerView.setExoNotifyCallBack(new SimpleExoNotifyCallBack() {
+        this.playerView.setExoNotifyCallBack(new IExoControlComponent() {
+            @Override
+            public void attach(@NonNull  ExoControllerWrapper exoControllerWrapper) {
+
+            }
+
+            @Nullable
+            @Override
+            public View getView() {
+                return null;
+            }
+
+            @Override
+            public void setPlayLocationLastTime(String tip) {
+
+            }
+
+            @Override
+            public void onFFTReady(int sampleRateHz, int channelCount, float[] fft) {
+
+            }
+
+            @Override
+            public void onMagnitudeReady(int sampleRateHz, float[] magnitude) {
+
+            }
+
+            @Override
+            public void onProgressChange(long current, long total, long seekTo) {
+
+            }
+
+            @Override
+            public void onVolumeChange(int current, int max) {
+
+            }
+
+            @Override
+            public void onBrightnessChange(float percent) {
+
+            }
+
+            @Override
+            public void onGestureStart() {
+
+            }
+
+            @Override
+            public void onGestureEnd() {
+
+            }
+
+            @Override
+            public void onFingerTouchClick(int fingerCount, boolean singleClick) {
+
+            }
+
+            @Override
+            public void onSingleFingerPointTouchEvent(int action, float rawX, float rawY, boolean isEdge) {
+
+            }
+
+            @Override
+            public void onScale(float totalScale) {
+
+            }
+
+            @Override
+            public void onLongPressStart(int fingerCount, boolean isEdge) {
+
+            }
+
+            @Override
+            public void onLongPressEnd(boolean isEdge) {
+
+            }
+
+            @Override
+            public List<IExoControlComponent> getExoComponents() {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public <T extends IExoControlComponent> T getExoControlComponentByClass(Class<T> cls) {
+                return null;
+            }
+
             @Override
             public void onExoRenderedFirstFrame() {
+
+            }
+
+            @Override
+            public void onPlayerInfoChanged(ExoPlayerInfo exoPlayerInfo) {
+
+            }
+
+            @Override
+            public void onNetworkBytesChanged(long bytesInLastSecond, long totalBytes) {
+
+            }
+
+            @Override
+            public void onPlayingProgressPositionChanged(long currentMs, long durationMs, long bufferedPositionMs, int bufferedPercentage) {
+                if (onTtsPlayerCallback != null) {
+                    onTtsPlayerCallback.onPlayingProgressPositionChanged(currentMs, durationMs, bufferedPositionMs, bufferedPercentage);
+                }
             }
 
             @Override
@@ -186,8 +324,28 @@ public class TtsStreamPlayer {
             }
 
             @Override
-            public void onShortVideoComponentChangedAction(boolean clearScreenMode,
-                                                           ExoShortVideoSimpleControlBarView exoShortVideoSimpleControlBarView) {
+            public void onPlayerStateChanged(int playerState, String playerStateName, View playerView) {
+
+            }
+
+            @Override
+            public void onPlayerError(String errorMsg, Throwable throwable) {
+
+            }
+
+            @Override
+            public void onVideoSizeChanged(View view, float pixelWidthHeightRatio, int videoWidth, int videoHeight, int scaleMode) {
+
+            }
+
+            @Override
+            public void onExperienceTimeout() {
+
+            }
+
+            @Override
+            public void onShortVideoComponentChangedAction(boolean clearScreenMode, ExoShortVideoSimpleControlBarView exoShortVideoSimpleControlBarView) {
+
             }
         });
         this.audioFocusChangeListener = focusChange -> {
@@ -229,11 +387,14 @@ public class TtsStreamPlayer {
 
         stopInternal(false);
         requestAudioFocus();
+        int sessionId = beginPcmSession();
         playerView.startPcmStream(new ExoPcmStreamConfig()
                 .setSampleRateHz(SAMPLE_RATE_HZ)
                 .setChannelCount(CHANNEL_COUNT)
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                 .setMaxQueuedDurationMs(DEMO_MAX_QUEUED_DURATION_MS));
+        // startPcmStream 会重建底层 AudioTrack，因此每次新会话开始后都要重新应用当前倍速。
+        applyPlaybackSpeed();
 
         isPaused = false;
         stopRequested = false;
@@ -242,7 +403,7 @@ public class TtsStreamPlayer {
 
         Credential credential = new Credential(APP_ID, SECRET_ID, SECRET_KEY, "");
         FlowingSpeechSynthesizerRequest request = buildRequest();
-        FlowingSpeechSynthesizerListener listener = buildListener();
+        FlowingSpeechSynthesizerListener listener = buildListener(sessionId);
         Thread worker = new Thread(() -> runSynthesisLoop(textChunks, credential, request, listener),
                 "TtsStreamDemoWorker");
         synthesizerThread = worker;
@@ -294,6 +455,42 @@ public class TtsStreamPlayer {
 
     public void setOnTtsPlayerCallback(OnTtsPlayerCallback onTtsPlayerCallback) {
         this.onTtsPlayerCallback = onTtsPlayerCallback;
+    }
+
+    /**
+     * 设置 TTS PCM 流的本地实时播放倍速。
+     *
+     * <p>该设置直接作用于当前 AudioTrack 输出，已在底层缓冲中的 PCM 也会按新倍速播放。
+     *
+     * @param speed 播放倍速，底层会限制到合理范围
+     */
+    public void setPlaybackSpeed(float speed) {
+        float normalizedSpeed = normalizePlaybackParameter(speed, DEFAULT_PLAYBACK_SPEED);
+        playbackSpeed = normalizedSpeed;
+        // 当前正在播放 PCM 时立即转发到底层 AudioTrack；尚未开始播放时保存为下一轮会话默认值。
+        playerView.setSpeed(normalizedSpeed);
+    }
+
+
+    /**
+     * 设置腾讯云 TTS 发音人音色。
+     *
+     * <p>该值会用于后续创建的合成请求；如果当前 SDK 会话仍在运行，也同步写回当前 request。
+     *
+     * @param voiceType 腾讯云 TTS voice_type
+     */
+    public void setVoiceType(int voiceType) {
+        int resolvedVoiceType = voiceType > 0 ? voiceType : DEFAULT_VOICE_TYPE;
+        this.voiceType = resolvedVoiceType;
+        FlowingSpeechSynthesizer currentSynthesizer = synthesizer;
+        if (currentSynthesizer != null) {
+            FlowingSpeechSynthesizerRequest request = currentSynthesizer.getRequest();
+            if (request != null) {
+                // 腾讯云音色属于合成请求参数：这里同步更新 SDK 持有的 request，供后续合成输入使用。
+                request.setVoiceType(resolvedVoiceType);
+                currentSynthesizer.setRequest(request);
+            }
+        }
     }
 
     /**
@@ -356,8 +553,21 @@ public class TtsStreamPlayer {
         request.setSessionId(UUID.randomUUID().toString());
         request.setSpeed(0f);
         request.setVolume(0f);
-        request.setVoiceType(DEFAULT_VOICE_TYPE);
+        // 只在腾讯云请求层设置音色；播放器链路不再做任何本地变声。
+        request.setVoiceType(voiceType);
         return request;
+    }
+
+    private void applyPlaybackSpeed() {
+        // 复用播放器统一的 setSpeed 入口，SimpleExoPlayerView 会在 PCM 模式下路由到 PCM 核心。
+        playerView.setSpeed(playbackSpeed);
+    }
+
+    private float normalizePlaybackParameter(float value, float fallback) {
+        if (Float.isNaN(value) || Float.isInfinite(value) || value <= 0f) {
+            return fallback;
+        }
+        return Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, value));
     }
 
     /**
@@ -366,7 +576,7 @@ public class TtsStreamPlayer {
      * <p>回调里不直接处理 {@code AudioTrack}，而是统一把 PCM 转交给播放器的 PCM 流式核心，
      * 保证频谱与均衡器处理仍然由播放器内部链路负责。
      */
-    private FlowingSpeechSynthesizerListener buildListener() {
+    private FlowingSpeechSynthesizerListener buildListener(final int sessionId) {
         return new FlowingSpeechSynthesizerListener() {
             @Override
             public void onSynthesisStart(SpeechSynthesizerResponse response) {
@@ -376,9 +586,7 @@ public class TtsStreamPlayer {
             @Override
             public void onSynthesisEnd(SpeechSynthesizerResponse response) {
                 ExoLog.log("TtsStream onSynthesisEnd: " + response.getSessionId());
-                synthesisCompleted = true;
-                playerView.completePcmStream();
-                dispatchOnEnd();
+                markSynthesisEnded(sessionId);
             }
 
             @Override
@@ -386,21 +594,28 @@ public class TtsStreamPlayer {
                 if (stopRequested || buffer == null || !buffer.hasRemaining()) {
                     return;
                 }
-                byte[] audioData = new byte[buffer.remaining()];
-                buffer.get(audioData);
+                if (!markAudioCallbackStarted(sessionId)) {
+                    return;
+                }
                 try {
-                    waitForAppendCapacity();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    if (!stopRequested) {
-                        handleFailure("音频回调线程等待播放器队列回落时被中断");
+                    byte[] audioData = new byte[buffer.remaining()];
+                    buffer.get(audioData);
+                    try {
+                        waitForAppendCapacity();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        if (!stopRequested) {
+                            handleFailure("音频回调线程等待播放器队列回落时被中断");
+                        }
+                        return;
                     }
-                    return;
+                    if (stopRequested || !isActiveSession(sessionId)) {
+                        return;
+                    }
+                    playerView.appendPcmData(audioData, 0, audioData.length);
+                } finally {
+                    markAudioCallbackFinished(sessionId);
                 }
-                if (stopRequested) {
-                    return;
-                }
-                playerView.appendPcmData(audioData, 0, audioData.length);
             }
 
             @Override
@@ -409,13 +624,16 @@ public class TtsStreamPlayer {
 
             @Override
             public void onSynthesisCancel() {
+                if (!isActiveSession(sessionId)) {
+                    return;
+                }
                 ExoLog.log("TtsStream onSynthesisCancel");
                 abandonAudioFocus();
             }
 
             @Override
             public void onSynthesisFail(SpeechSynthesizerResponse response) {
-                if (stopRequested) {
+                if (stopRequested || !isActiveSession(sessionId)) {
                     return;
                 }
                 String errorMessage = response == null
@@ -435,9 +653,86 @@ public class TtsStreamPlayer {
      * 单段过长时，再按逗号和分号切二级；
      * 仍然过长时，按 80 个字符强制切块。
      *
-     * @param text 原始待合成文本
      * @return 可直接逐段提交给腾讯云流式 TTS 的文本片段列表
      */
+    private int beginPcmSession() {
+        synchronized (pcmCompletionLock) {
+            activeSessionId++;
+            pendingAudioCallbacks = 0;
+            synthesisEndReceived = false;
+            pcmStreamCompleted = false;
+            return activeSessionId;
+        }
+    }
+
+    private void invalidatePcmSession() {
+        synchronized (pcmCompletionLock) {
+            activeSessionId++;
+            pendingAudioCallbacks = 0;
+            synthesisEndReceived = false;
+            pcmStreamCompleted = false;
+        }
+    }
+
+    private boolean isActiveSession(int sessionId) {
+        return sessionId == activeSessionId;
+    }
+
+    private boolean markAudioCallbackStarted(int sessionId) {
+        synchronized (pcmCompletionLock) {
+            if (sessionId != activeSessionId || stopRequested || pcmStreamCompleted) {
+                return false;
+            }
+            pendingAudioCallbacks++;
+            return true;
+        }
+    }
+
+    private void markAudioCallbackFinished(int sessionId) {
+        boolean shouldTryComplete;
+        synchronized (pcmCompletionLock) {
+            if (sessionId != activeSessionId) {
+                return;
+            }
+            if (pendingAudioCallbacks > 0) {
+                pendingAudioCallbacks--;
+            }
+            shouldTryComplete = synthesisEndReceived && pendingAudioCallbacks == 0;
+        }
+        if (shouldTryComplete) {
+            mainHandler.postDelayed(() -> completePcmStreamIfReady(sessionId), PCM_STREAM_COMPLETE_GRACE_MS);
+        }
+    }
+
+    private void markSynthesisEnded(int sessionId) {
+        boolean shouldTryComplete;
+        synchronized (pcmCompletionLock) {
+            if (sessionId != activeSessionId || stopRequested || pcmStreamCompleted) {
+                return;
+            }
+            synthesisCompleted = true;
+            synthesisEndReceived = true;
+            shouldTryComplete = pendingAudioCallbacks == 0;
+        }
+        if (shouldTryComplete) {
+            mainHandler.postDelayed(() -> completePcmStreamIfReady(sessionId), PCM_STREAM_COMPLETE_GRACE_MS);
+        }
+    }
+
+    private void completePcmStreamIfReady(int sessionId) {
+        synchronized (pcmCompletionLock) {
+            if (sessionId != activeSessionId
+                    || stopRequested
+                    || !synthesisEndReceived
+                    || pendingAudioCallbacks > 0
+                    || pcmStreamCompleted) {
+                return;
+            }
+            pcmStreamCompleted = true;
+        }
+        playerView.completePcmStream();
+    }
+
     private List<String> split(String text) {
         String filteredText = filterEmoji(text, " ");
         List<String> result = new ArrayList<>();
@@ -461,7 +756,7 @@ public class TtsStreamPlayer {
      * <p>该实现刻意保持与业务侧参考代码相同的处理语义：
      * 如果最后一段只包含无效字符，则尝试拼回前一段，避免孤立的无意义尾巴片段。
      *
-     * @param text 待切分文本
+     * @param text       待切分文本
      * @param splitChars 分隔符集合字符串
      * @return 切分后的文本片段
      */
@@ -578,7 +873,7 @@ public class TtsStreamPlayer {
     /**
      * 过滤 emoji 或其他代理对字符，避免提交腾讯云 TTS 不支持的字符。
      *
-     * @param source 原始文本
+     * @param source      原始文本
      * @param replacement 替换文本
      * @return 过滤后的结果；输入为空时返回空串
      */
@@ -618,6 +913,7 @@ public class TtsStreamPlayer {
         stopRequested = true;
         synthesisCompleted = false;
         isPaused = false;
+        invalidatePcmSession();
 
         Thread threadToInterrupt = synthesizerThread;
         synthesizerThread = null;
@@ -641,6 +937,7 @@ public class TtsStreamPlayer {
         abandonAudioFocus();
 
         if (notifyStop) {
+            playerView.release();
             dispatchOnStop();
         }
     }
@@ -657,6 +954,7 @@ public class TtsStreamPlayer {
         stopRequested = true;
         isPaused = false;
         abandonAudioFocus();
+        dispatchOnEnd();
     }
 
     private void requestAudioFocus() {
@@ -738,5 +1036,9 @@ public class TtsStreamPlayer {
         void onEnd();
 
         void onError(String errorMessage);
+
+        void onPlayingProgressPositionChanged(long currentMs, long durationMs, long bufferedPositionMs, int bufferedPercentage);
+
+
     }
 }

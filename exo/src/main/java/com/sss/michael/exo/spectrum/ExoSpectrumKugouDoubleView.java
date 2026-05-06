@@ -142,10 +142,6 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
     private long lastFrameUpdateTimeMs;
 
     /**
-     * View 开始动画的时间，用于 idle 呼吸效果。
-     */
-    private long animationStartTimeMs;
-    /**
      * 当前是否已经收到有效音频频谱。
      */
     private boolean hasLiveSpectrumData;
@@ -262,8 +258,8 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
 
     @Override
     public void onMagnitudeReady(int sampleRateHz, float[] magnitude) {
-        if (magnitude == null || magnitude.length == 0) {
-            hasLiveSpectrumData = false;
+        if (!hasDrawableSpectrumData(magnitude)) {
+            clearSpectrumData();
             postInvalidateOnAnimation();
             return;
         }
@@ -300,7 +296,6 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         clearSpectrumData();
-        animationStartTimeMs = SystemClock.uptimeMillis();
         postInvalidateOnAnimation();
     }
 
@@ -333,21 +328,25 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
         if (getWidth() <= 0 || getHeight() <= 0) {
             return;
         }
-        drawThinKugouSpectrum(canvas);
-        postInvalidateOnAnimation();
+        if (drawThinKugouSpectrum(canvas)) {
+            postInvalidateOnAnimation();
+        }
     }
 
     /**
      * 绘制 GIF 里那种细条横向酷狗频谱。
      */
-    private void drawThinKugouSpectrum(Canvas canvas) {
+    private boolean drawThinKugouSpectrum(Canvas canvas) {
+        long nowMs = SystemClock.uptimeMillis();
+        boolean liveDataExpired = lastFrameUpdateTimeMs == 0L || nowMs - lastFrameUpdateTimeMs > 260L;
+        if (!hasLiveSpectrumData || liveDataExpired) {
+            return false;
+        }
+
         int barCount = resolveBarCount(getWidth());
         ensureLevelCapacity(barCount);
 
-        long nowMs = SystemClock.uptimeMillis();
-        boolean liveDataExpired = lastFrameUpdateTimeMs == 0L || nowMs - lastFrameUpdateTimeMs > 260L;
-        boolean useIdle = !hasLiveSpectrumData || liveDataExpired;
-        updateDrawLevels(nowMs, useIdle);
+        updateDrawLevels();
         updateSmoothEnvelopeLevels(drawLevels, envelopeLevels, smoothScratchLevels);
         updateSmoothEnvelopeLevels(rearDrawLevels, rearEnvelopeLevels, rearSmoothScratchLevels);
 
@@ -377,7 +376,7 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
 
         buildCurvePath();
         canvas.drawPath(curvePath, curvePaint);
-
+        return true;
     }
 
     /**
@@ -451,7 +450,7 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
         }
         if (maxValue <= 0.0001F) {
             for (int index = 0; index < outputLevels.length; index++) {
-                outputLevels[index] = 0.035F;
+                outputLevels[index] = 0F;
             }
             return;
         }
@@ -477,20 +476,19 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
     }
 
     /**
-     * 更新当前绘制高度：有实时数据时追赶目标，没有数据时生成轻微呼吸波。
+     * 更新当前绘制高度。
      */
-    private void updateDrawLevels(long nowMs, boolean useIdle) {
-        float time = (nowMs - animationStartTimeMs) / 1000F;
-        updateLevelGroup(targetLevels, drawLevels, peakLevels, time, useIdle, 0F);
-        updateLevelGroup(rearTargetLevels, rearDrawLevels, rearPeakLevels, time, useIdle, 0.42F);
+    private void updateDrawLevels() {
+        updateLevelGroup(targetLevels, drawLevels, peakLevels);
+        updateLevelGroup(rearTargetLevels, rearDrawLevels, rearPeakLevels);
     }
 
     /**
      * 更新一组频谱高度，前景和后景分别维护，避免双段波形互相污染。
      */
-    private void updateLevelGroup(float[] targets, float[] draws, float[] peaks, float time, boolean useIdle, float idlePhaseOffset) {
+    private void updateLevelGroup(float[] targets, float[] draws, float[] peaks) {
         for (int index = 0; index < draws.length; index++) {
-            float target = useIdle ? resolveIdleLevel(index, draws.length, time + idlePhaseOffset) : targets[index];
+            float target = targets[index];
             float speed = target > draws[index] ? 0.34F : 0.10F;
             draws[index] += (target - draws[index]) * speed;
             if (draws[index] > peaks[index]) {
@@ -601,31 +599,21 @@ public class ExoSpectrumKugouDoubleView extends View implements IExoFFTCallBack 
         rearEnvelopeLevels = new float[barCount];
         smoothScratchLevels = new float[barCount];
         rearSmoothScratchLevels = new float[barCount];
-        for (int index = 0; index < barCount; index++) {
-            float idle = resolveIdleLevel(index, barCount, 0F);
-            float rearIdle = resolveIdleLevel(index, barCount, 0.42F);
-            targetLevels[index] = idle;
-            rearTargetLevels[index] = rearIdle;
-            drawLevels[index] = idle;
-            rearDrawLevels[index] = rearIdle;
-            peakLevels[index] = idle;
-            rearPeakLevels[index] = rearIdle;
-            envelopeLevels[index] = idle;
-            rearEnvelopeLevels[index] = rearIdle;
-            smoothScratchLevels[index] = idle;
-            rearSmoothScratchLevels[index] = rearIdle;
-        }
     }
 
     /**
-     * 空数据状态的默认波形：左侧有明显小峰，中后段保留轻微起伏。
+     * 判断是否有可绘制的频谱数据。
      */
-    private float resolveIdleLevel(int index, int count, float time) {
-        float position = index / (float) Math.max(1, count - 1);
-        float leftHump = gaussian(position, 0.16F, 0.18F);
-        float middleHump = gaussian(position, 0.58F, 0.20F);
-        float wave = 0.5F + 0.5F * (float) Math.sin(index * 0.14F + time * 1.25F);
-        return clamp(0.035F + leftHump * 0.22F + middleHump * 0.11F + wave * 0.030F, 0.035F, 0.34F);
+    private boolean hasDrawableSpectrumData(float[] spectrumData) {
+        if (spectrumData == null || spectrumData.length == 0) {
+            return false;
+        }
+        for (float value : spectrumData) {
+            if (value > 0.0001F) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -25,6 +25,12 @@
                     android:text="柱状图" />
 
                 <RadioButton
+                    android:id="@+id/rb_kugouDoubleView"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="仿酷狗双面谱" />
+
+                <RadioButton
                     android:id="@+id/rb_glow"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -55,6 +61,12 @@
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="350dp">
+
+            <com.sss.michael.exo.spectrum.ExoSpectrumKugouDoubleView
+                android:id="@+id/kugouDoubleView"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:visibility="gone" />
 
             <com.sss.michael.exo.spectrum.ExoSpectrumColumnView
                 android:id="@+id/columnView"

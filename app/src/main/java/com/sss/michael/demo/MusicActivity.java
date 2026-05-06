@@ -34,6 +34,7 @@ public class MusicActivity extends BaseActivity<ActivityMusicBinding> {
                 binding.ringWare.onFFTReady(sampleRateHz, channelCount, fft);
                 binding.ringColumnWare.onFFTReady(sampleRateHz, channelCount, fft);
                 binding.kugouDoubleView.onFFTReady(sampleRateHz, channelCount, fft);
+                binding.voice.onFFTReady(sampleRateHz, channelCount, fft);
 
             }
 
@@ -56,6 +57,9 @@ public class MusicActivity extends BaseActivity<ActivityMusicBinding> {
 
                 binding.kugouDoubleView.setVisibility(binding.rbKugouDoubleView.isChecked() ? VISIBLE : GONE);
                 binding.kugouDoubleView.onMagnitudeReady(sampleRateHz, magnitude);
+
+                binding.voice.setVisibility(binding.rbVoice.isChecked() ? VISIBLE : GONE);
+                binding.voice.onMagnitudeReady(sampleRateHz, magnitude);
             }
         });
         player.play(ExoPlayMode.MUSIC, 0, url);

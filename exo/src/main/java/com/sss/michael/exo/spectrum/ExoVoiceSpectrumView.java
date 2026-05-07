@@ -54,6 +54,21 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     private static final float DATA_EPSILON = 0.0001F;
 
     /**
+     * 实时有声状态下的最低绘制高度，避免有效语音过小时跳动显得太瘦。
+     */
+    private static final float MIN_LIVE_LEVEL = 0.24F;
+
+    /**
+     * 语音能量增益，让小音量也能更明显地推动柱体高度。
+     */
+    private static final float LEVEL_GAIN = 1.02F;
+
+    /**
+     * 能量曲线指数，低于 1 时会放大中低能量段的可见高度。
+     */
+    private static final float LEVEL_GAMMA = 0.72F;
+
+    /**
      * 语音条画笔。
      * <p>
      * 使用 {@link Paint.Style#STROKE} 绘制竖线，并设置 {@link Paint.Cap#ROUND}
@@ -257,7 +272,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
 
     @Override
     public void onMagnitudeReady(int sampleRateHz, float[] magnitude) {
-
+//        setVoiceLevels(magnitude);
     }
 
     @Override
@@ -304,7 +319,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     private boolean updateDrawLevels() {
         boolean moving = false;
         for (int index = 0; index < BAR_COUNT; index++) {
-            float speed = targetLevels[index] > drawLevels[index] ? 0.45F : 0.18F;
+            float speed = targetLevels[index] > drawLevels[index] ? 0.62F : 0.26F;
             drawLevels[index] += (targetLevels[index] - drawLevels[index]) * speed;
             if (Math.abs(targetLevels[index] - drawLevels[index]) > 0.002F) {
                 moving = true;
@@ -356,9 +371,10 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
             return;
         }
 
+        float[] rawLevels = new float[BAR_COUNT];
         for (int index = 0; index < BAR_COUNT; index++) {
-            int start = index * levels.length / BAR_COUNT;
-            int end = Math.max(start + 1, (index + 1) * levels.length / BAR_COUNT);
+            int start = Math.min(levels.length - 1, Math.max(0, Math.round(levels.length * resolveRangeStartRatio(index))));
+            int end = Math.min(levels.length, Math.max(start + 1, Math.round(levels.length * resolveRangeEndRatio(index))));
             float sum = 0F;
             float localMax = 0F;
             for (int dataIndex = start; dataIndex < end && dataIndex < levels.length; dataIndex++) {
@@ -367,10 +383,19 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
                 localMax = Math.max(localMax, value);
             }
             float average = sum / Math.max(1, end - start);
-            float normalized = (average * 0.35F + localMax * 0.65F) / maxValue;
+            float normalized = (average * 0.30F + localMax * 0.70F) / maxValue;
+            rawLevels[index] = (float) Math.pow(clamp(normalized * LEVEL_GAIN * resolveBandGain(index), 0F, 1F), LEVEL_GAMMA);
+        }
 
-            // sqrt 非线性增强能提高小音量下的可见性，同时保持最大高度不超过 1。
-            targetLevels[index] = clamp((float) Math.sqrt(normalized), 0F, 1F);
+        for (int index = 0; index < BAR_COUNT; index++) {
+            float blend = rawLevels[index];
+            if (index > 0) {
+                blend = blend * 0.82F + rawLevels[index - 1] * 0.18F;
+            }
+            if (index < BAR_COUNT - 1) {
+                blend = blend * 0.90F + rawLevels[index + 1] * 0.10F;
+            }
+            targetLevels[index] = clamp(MIN_LIVE_LEVEL + blend * (1F - MIN_LIVE_LEVEL), 0F, 1F);
         }
     }
 
@@ -385,10 +410,50 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     private float resolveBarProfile(int index) {
         switch (index) {
             case 0:
+                return 0.58F;
             case 3:
-                return 0.42F;
+                return 0.72F;
             default:
-                return 0.88F;
+                return 1F;
+        }
+    }
+
+    private float resolveRangeStartRatio(int index) {
+        switch (index) {
+            case 0:
+                return 0.03F;
+            case 1:
+                return 0.16F;
+            case 2:
+                return 0.34F;
+            default:
+                return 0.52F;
+        }
+    }
+
+    private float resolveRangeEndRatio(int index) {
+        switch (index) {
+            case 0:
+                return 0.31F;
+            case 1:
+                return 0.52F;
+            case 2:
+                return 0.74F;
+            default:
+                return 0.90F;
+        }
+    }
+
+    private float resolveBandGain(int index) {
+        switch (index) {
+            case 0:
+                return 0.96F;
+            case 1:
+                return 1.04F;
+            case 2:
+                return 1.10F;
+            default:
+                return 1.18F;
         }
     }
 

@@ -14,99 +14,112 @@ import com.sss.michael.exo.callback.IExoFFTCallBack;
 import com.sss.michael.exo.util.ExoDensityUtil;
 
 /**
- * @author Michael by SSS
- * @date 2026/5/7 0007 15:50
- * @Description 轻量级语音频谱控件
+ * 轻量级语音频谱控件。
  * <p>
- * 控件用于绘制类似语音录制、语音播放、语音识别监听状态中的 4 根红色竖向跳动条。
- * 四根线条以控件中心为基准上下对称绘制，左右两根较短，中间两根较高，
- * 形成紧凑、清晰的小尺寸语音动效。
+ * 该控件使用 4 根竖向细线模拟常见的语音输入/语音播放指示器。
+ * 四根线以控件垂直中心线为基准向上下两侧对称绘制，整体风格偏轻量、紧凑。
  * <p>
- * 控件遵循“无有效数据不绘制”的原则：当外部传入 null、空数组、全 0 数据，
- * 或超过 {@link #DATA_TIMEOUT_MS} 未收到新数据时，onDraw 会直接返回，
- * 不会绘制默认直线、默认波形或历史残影。
+ * 当前版本优先消费 {@link #onFFTReady(int, int, float[])} 回调中的原始 FFT 结果，
+ * 会先把复数频谱转换为幅度，再映射到 4 个更贴近人声的频带。
+ * 这样可以让每一根线都对应实际频段，而不是简单地把原数组平均切成 4 段。
+ * <p>
+ * 控件还带有两个关键特性：
+ * 1. 静默或短暂断帧时，不会直接闪空，而是进入缓慢衰减。
+ * 2. 线条回落使用带阻尼的速度模型，而不是简单插值到 0。
  */
 public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
 
     /**
-     * 语音条数量。
-     * <p>
-     * 固定为 4 根，和目标视觉图保持一致；如果未来要扩展为更多条，
-     * 需要同时调整 {@link #resolveBarProfile(int)} 的造型比例。
+     * 固定绘制 4 根语音条。
      */
     private static final int BAR_COUNT = 4;
 
     /**
-     * 频谱数据有效期，单位毫秒。
+     * 数据超时时间，单位毫秒。
      * <p>
-     * 频谱数据通常按较高频率持续回调。如果超过该时间没有收到新数据，
-     * 说明当前音频状态可能已经暂停、停止或回调中断，此时控件停止绘制，
-     * 避免上一帧画面停留在界面上造成误解。
+     * 超过该时间仍未收到新的音频数据时，控件不会立刻清空，
+     * 而是开始进入静默衰减阶段。
      */
     private static final long DATA_TIMEOUT_MS = 320L;
 
     /**
-     * 有效能量阈值。
+     * 判断有效数据的最小阈值。
      * <p>
-     * 小于该值的数据视为静音或无效噪声。该阈值用于判断是否需要绘制，
-     * 也用于跳过接近 0 的单根语音条，避免静音时出现极短的底线。
+     * 低于该阈值的值被视为无效或近似静音。
      */
     private static final float DATA_EPSILON = 0.0001F;
 
     /**
-     * 实时有声状态下的最低绘制高度，避免有效语音过小时跳动显得太瘦。
+     * 有效语音状态下的最低目标高度。
+     * <p>
+     * 用于避免有效语音存在时柱子过于“瘦弱”。
      */
     private static final float MIN_LIVE_LEVEL = 0.1F;
 
     /**
-     * 语音能量增益，让小音量也能更明显地推动柱体高度。
+     * 整体能量增益。
+     * <p>
+     * 值越大，小音量越容易被抬高到可见区间。
      */
     private static final float LEVEL_GAIN = 1.02F;
 
     /**
-     * 能量曲线指数，低于 1 时会放大中低能量段的可见高度。
+     * 能量曲线指数。
+     * <p>
+     * 大于 1 时会轻微压制低能量段，小于 1 时会放大小能量段。
      */
     private static final float LEVEL_GAMMA = 1.072F;
 
+    /**
+     * FFT 幅度的对数压缩因子。
+     * <p>
+     * 用于把动态范围较大的原始 FFT 幅度压缩到更适合 UI 动效的区间。
+     */
     private static final float FFT_LOG_K = 0.18F;
 
+    /**
+     * 四根语音条对应的人声频带左边界，单位 Hz。
+     */
     private static final float[] VOICE_BAND_START_HZ = new float[]{110F, 260F, 520F, 1200F};
 
+    /**
+     * 四根语音条对应的人声频带右边界，单位 Hz。
+     */
     private static final float[] VOICE_BAND_END_HZ = new float[]{360F, 780F, 1800F, 4200F};
 
+    /**
+     * 每个频带的增益系数。
+     * <p>
+     * 右侧高频条适当给一点补偿，避免高频尾部太“死”。
+     */
     private static final float[] VOICE_BAND_GAIN = new float[]{1.00F, 1.08F, 1.16F, 1.26F};
 
+    /**
+     * 归一化峰值衰减系数。
+     * <p>
+     * 用于让每一帧的归一化参考值平滑下降，减少“忽大忽小”的闪烁感。
+     */
     private static final float NORMALIZATION_PEAK_DECAY = 0.92F;
 
-    private static final float FALL_DAMPING = 0.84F;
-
-    private static final float LIVE_FALL_ACCELERATION = 0.0050F;
-
-    private static final float SILENCE_FALL_ACCELERATION = 0.0042F;
+    /**
+     * 静默阶段回落速度相对正常回落速度的比例。
+     */
+    private static final float SILENCE_FALL_RATIO = 0.84F;
 
     /**
      * 语音条画笔。
      * <p>
-     * 使用 {@link Paint.Style#STROKE} 绘制竖线，并设置 {@link Paint.Cap#ROUND}
-     * 形成圆头效果。相比绘制矩形，圆头线条在 10dp~20dp 这类小尺寸场景中
-     * 更接近常见语音状态指示器的视觉风格。
+     * 使用描边方式绘制竖线，并通过圆头端点模拟更轻巧的语音指示器视觉。
      */
     private final Paint barPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     /**
-     * 目标高度数组，范围 0~1。
-     * <p>
-     * 外部传入的任意长度音频能量数组会被压缩成 4 段，分别写入该数组。
-     * targetLevels 只表达“期望到达的高度”，真正绘制时会通过 drawLevels
-     * 做插值追赶，从而获得平滑跳动效果。
+     * 每根语音条的目标高度，范围 0~1。
      */
     private final float[] targetLevels = new float[BAR_COUNT];
 
     /**
-     * 当前绘制高度数组，范围 0~1。
-     * <p>
-     * 每一帧都会向 {@link #targetLevels} 靠近：能量上升时响应更快，
-     * 能量下降时回落稍慢，让语音条看起来更自然，避免生硬闪烁。
+     * 每根语音条当前实际绘制高度，范围 0~1。
      */
     private final float[] drawLevels = new float[BAR_COUNT];
 
@@ -115,9 +128,28 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     private float normalizationPeak;
 
     /**
-     * 语音条颜色。
+     * 回落速度。
      * <p>
-     * 默认颜色为项目当前使用的红色值，外部可通过 {@link #setBarColor(int)} 修改。
+     * 值越大，线条失去能量后下降得越快。
+     */
+    private float fallSpeed = 0.0150F;
+
+    /**
+     * 阻尼速度。
+     * <p>
+     * 越接近 1，回落拖尾越明显。
+     */
+    private float fallDamping = 0.85F;
+
+    /**
+     * 死区阈值。
+     * <p>
+     * 低于该阈值的微小高度直接视为不可见，用于抑制抖动和残影。
+     */
+    private float deadZone = 0.001F;
+
+    /**
+     * 语音条颜色。
      */
     private int barColor = Color.parseColor("#E9302d");
 
@@ -127,27 +159,27 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     private float barWidth;
 
     /**
-     * 相邻语音条水平间距，单位 px。
+     * 相邻语音条的水平间距，单位 px。
      */
     private float barSpacing;
 
     /**
-     * 最近一次收到有效音频数据的时间。
-     * <p>
-     * 使用 {@link SystemClock#uptimeMillis()} 记录，避免受系统时间调整影响。
+     * 最近一次收到有效数据的时间。
      */
     private long lastUpdateTimeMs;
 
     /**
-     * 当前是否已经收到有效实时频谱数据。
+     * 当前是否仍处于“有内容可绘制”的状态。
+     * <p>
+     * 即使输入刚进入静默，只要 drawLevels 还有可见高度，也会继续保持 true，
+     * 直到衰减完成。
      */
     private boolean hasLiveSpectrumData;
 
     /**
      * 当前是否处于暂停冻结状态。
      * <p>
-     * 暂停后控件会保持当前 drawLevels 对应的波形帧，不再消费新的音频数据，
-     * 也不会因为 {@link #DATA_TIMEOUT_MS} 超时而清空画面。
+     * 暂停后保留当前帧形态，不继续消费新的输入数据。
      */
     private boolean spectrumPaused;
 
@@ -164,7 +196,6 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         barWidth = ExoDensityUtil.dp2px(context, 3F);
         barSpacing = ExoDensityUtil.dp2px(context, 3F);
 
-        // 使用描边线条绘制语音条，圆头在小尺寸下能保持更柔和的视觉观感。
         barPaint.setStyle(Paint.Style.STROKE);
         barPaint.setStrokeCap(Paint.Cap.ROUND);
         barPaint.setStrokeWidth(barWidth);
@@ -185,7 +216,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     /**
      * 设置单根语音条线宽。
      *
-     * @param widthPx 线宽，单位 px，最小值为 1px
+     * @param widthPx 线宽，单位 px
      */
     public void setBarWidth(float widthPx) {
         barWidth = Math.max(1F, widthPx);
@@ -196,7 +227,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     /**
      * 设置相邻语音条间距。
      *
-     * @param spacingPx 间距，单位 px，最小值为 0px
+     * @param spacingPx 间距，单位 px
      */
     public void setBarSpacing(float spacingPx) {
         barSpacing = Math.max(0F, spacingPx);
@@ -204,12 +235,51 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 设置语音能量数据。
-     * <p>
-     * 该方法适合由录音音量、语音识别音量、FFT 回调或业务层自定义能量数组直接调用。
-     * 输入数组长度不要求固定，方法内部会按区间压缩为 4 根语音条的目标高度。
+     * 设置回落速度。
      *
-     * @param levels 音频能量数组，值越大表示该采样区间能量越强
+     * @param speed 回落加速度，值越大下降越快
+     */
+    public void setFallSpeed(float speed) {
+        fallSpeed = clamp(speed, 0.0005F, 0.05F);
+    }
+
+    /**
+     * 设置阻尼速度。
+     *
+     * @param damping 阻尼系数，越接近 1 拖尾越明显
+     */
+    public void setFallDamping(float damping) {
+        fallDamping = clamp(damping, 0.50F, 0.98F);
+    }
+
+    /**
+     * 设置死区阈值。
+     *
+     * @param threshold 微小高度忽略阈值
+     */
+    public void setDeadZone(float threshold) {
+        deadZone = clamp(threshold, 0.001F, 0.08F);
+    }
+
+    /**
+     * 一次性设置语音条回落手感。
+     *
+     * @param speed     回落速度
+     * @param damping   阻尼速度
+     * @param threshold 死区阈值
+     */
+    public void setDynamics(float speed, float damping, float threshold) {
+        setFallSpeed(speed);
+        setFallDamping(damping);
+        setDeadZone(threshold);
+    }
+
+    /**
+     * 直接设置一组语音能量数据。
+     * <p>
+     * 适合录音音量、业务层自定义能量、或外部已做过预处理的实时音量数组。
+     *
+     * @param levels 输入能量数组
      */
     public void setVoiceLevels(float[] levels) {
         if (spectrumPaused) {
@@ -227,10 +297,9 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 清空频谱数据并停止绘制。
+     * 清空当前频谱状态。
      * <p>
-     * 清空时会同时重置目标高度和当前绘制高度。下一帧如果仍没有有效数据，
-     * 控件会保持完全空白，不显示默认条形或上一帧残留。
+     * 该方法会重置目标高度、当前绘制高度、回落速度和归一化参考峰值。
      */
     public void clearSpectrumData() {
         for (int index = 0; index < BAR_COUNT; index++) {
@@ -243,6 +312,12 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         lastUpdateTimeMs = 0L;
     }
 
+    /**
+     * 进入静默衰减状态。
+     * <p>
+     * 与“立即清空”不同，这里只把目标值推向 0，
+     * 让当前已绘制出来的柱子按阻尼模型慢慢落下。
+     */
     private void beginSilenceDecay() {
         for (int index = 0; index < BAR_COUNT; index++) {
             targetLevels[index] = 0F;
@@ -256,11 +331,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 设置语音频谱是否暂停。
-     * <p>
-     * 暂停时保留当前已经绘制出来的波形帧；暂停期间即使播放器继续回调数据，
-     * {@link #setVoiceLevels(float[])} 也会直接忽略，从而保证画面不再跳动。
-     * 恢复时会刷新最近更新时间，避免刚恢复就因为暂停期间的时间流逝而立即被判定为过期。
+     * 设置是否暂停频谱绘制。
      *
      * @param paused true 表示冻结当前帧，false 表示恢复实时绘制
      */
@@ -290,9 +361,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 获取当前是否处于暂停冻结状态。
-     *
-     * @return true 表示当前正在保持暂停帧
+     * 获取当前是否处于暂停状态。
      */
     public boolean isSpectrumPaused() {
         return spectrumPaused;
@@ -300,7 +369,6 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
 
     @Override
     public void onFFTReady(int sampleRateHz, int channelCount, float[] fft) {
-        // 当前控件使用 FFT 回调作为默认数据入口，将原始频谱数据压缩为 4 根语音条。
         if (spectrumPaused) {
             return;
         }
@@ -315,13 +383,12 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
 
     @Override
     public void onMagnitudeReady(int sampleRateHz, float[] magnitude) {
-
+        // 当前控件优先使用原始 FFT 数据，不消费 magnitude 回调。
     }
 
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
-        // View 离屏后释放实时状态，避免重新 attach 时继续显示旧语音帧。
         clearSpectrumData();
     }
 
@@ -331,21 +398,24 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         if (getWidth() <= 0 || getHeight() <= 0) {
             return;
         }
+
         long nowMs = SystemClock.uptimeMillis();
         if (!hasLiveSpectrumData || lastUpdateTimeMs == 0L) {
             return;
         }
+
         if (spectrumPaused) {
             drawBars(canvas);
             return;
         }
-        boolean silenceDecay = nowMs - lastUpdateTimeMs > DATA_TIMEOUT_MS;
 
-        // 先更新当前绘制高度，再按照最新 drawLevels 绘制当前帧。
+        boolean silenceDecay = nowMs - lastUpdateTimeMs > DATA_TIMEOUT_MS;
         boolean moving = updateDrawLevels(silenceDecay);
+
         if (hasVisibleLevels(drawLevels)) {
             drawBars(canvas);
         }
+
         if (moving) {
             postInvalidateOnAnimation();
         } else if (!hasVisibleLevels(drawLevels)) {
@@ -356,29 +426,36 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     /**
      * 更新当前绘制高度。
      * <p>
-     * 当目标高度高于当前高度时使用较大的追赶系数，让语音输入增强时立即反馈；
-     * 当目标高度低于当前高度时使用较小的回落系数，让线条下降更柔和。
+     * 上升阶段使用较快追赶，让输入变化能快速反映到 UI；
+     * 下降阶段则使用“加速度 + 阻尼”的方式下落，形成更自然的回落尾巴。
      *
-     * @return true 表示仍存在可见动画位移，需要继续请求下一帧
+     * @param silenceDecay 是否已经进入静默衰减阶段
+     * @return true 表示当前仍有明显动画位移，需要继续请求下一帧
      */
     private boolean updateDrawLevels(boolean silenceDecay) {
         boolean moving = false;
         for (int index = 0; index < BAR_COUNT; index++) {
             float target = silenceDecay ? 0F : targetLevels[index];
+
             if (target >= drawLevels[index]) {
                 drawLevels[index] += (target - drawLevels[index]) * 0.62F;
                 fallVelocities[index] = 0F;
             } else {
-                float acceleration = silenceDecay ? SILENCE_FALL_ACCELERATION : LIVE_FALL_ACCELERATION;
-                fallVelocities[index] = (fallVelocities[index] + acceleration) * FALL_DAMPING;
+                float acceleration = silenceDecay ? fallSpeed * SILENCE_FALL_RATIO : fallSpeed;
+                fallVelocities[index] = (fallVelocities[index] + acceleration) * fallDamping;
                 drawLevels[index] = Math.max(target, drawLevels[index] - fallVelocities[index]);
             }
+
             drawLevels[index] = clamp(drawLevels[index], 0F, 1F);
-            if (drawLevels[index] <= DATA_EPSILON && target <= DATA_EPSILON) {
+
+            if (drawLevels[index] <= deadZone && target <= DATA_EPSILON) {
                 drawLevels[index] = 0F;
                 fallVelocities[index] = 0F;
             }
-            if (Math.abs(target - drawLevels[index]) > 0.002F || drawLevels[index] > 0.01F || fallVelocities[index] > 0.001F) {
+
+            if (Math.abs(target - drawLevels[index]) > 0.002F
+                    || drawLevels[index] > deadZone
+                    || fallVelocities[index] > 0.001F) {
                 moving = true;
             }
         }
@@ -387,11 +464,8 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
 
     /**
      * 绘制 4 根中心对齐的语音条。
-     * <p>
-     * 语音条以控件垂直中心为基准，上下对称延展。这样即使控件高度很小，
-     * 也能保持视觉居中，不会贴顶或贴底。
      *
-     * @param canvas 当前绘制画布
+     * @param canvas 当前画布
      */
     private void drawBars(Canvas canvas) {
         float totalWidth = BAR_COUNT * barWidth + (BAR_COUNT - 1) * barSpacing;
@@ -411,12 +485,9 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 将原始音频能量数组压缩为 4 根语音条的目标高度。
-     * <p>
-     * 每根语音条对应原数组中的一个连续区间。区间内同时参考平均值和峰值：
-     * 平均值用于保证整体稳定，峰值用于保留瞬时语音冲击，避免声音尖峰被完全抹平。
+     * 将普通能量数组压缩为 4 根语音条目标高度。
      *
-     * @param levels 原始音频能量数组
+     * @param levels 原始能量数组
      */
     private void buildTargetLevels(float[] levels) {
         float maxValue = 0F;
@@ -441,7 +512,10 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
             }
             float average = sum / Math.max(1, end - start);
             float normalized = (average * 0.30F + localMax * 0.70F) / maxValue;
-            rawLevels[index] = (float) Math.pow(clamp(normalized * LEVEL_GAIN * resolveBandGain(index), 0F, 1F), LEVEL_GAMMA);
+            rawLevels[index] = (float) Math.pow(
+                    clamp(normalized * LEVEL_GAIN * resolveBandGain(index), 0F, 1F),
+                    LEVEL_GAMMA
+            );
         }
 
         for (int index = 0; index < BAR_COUNT; index++) {
@@ -457,12 +531,14 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 获取每根语音条的造型高度系数。
+     * 根据原始 FFT 数据构建 4 根语音条目标高度。
      * <p>
-     * 左右两根较短，中间两根较高，用固定轮廓还原设计图中的语音指示器造型。
+     * 输入数据格式为复数频谱交错数组：
+     * `fft[2i]` 是实部，`fft[2i+1]` 是虚部。
      *
-     * @param index 语音条下标
-     * @return 当前语音条相对于最大高度的比例系数
+     * @param sampleRateHz 采样率
+     * @param channelCount 声道数
+     * @param fft          原始 FFT 数据
      */
     private void buildTargetLevelsFromFft(int sampleRateHz, int channelCount, float[] fft) {
         int fftSize = fft != null ? fft.length : 0;
@@ -550,6 +626,11 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         }
     }
 
+    /**
+     * 每根语音条的固定造型比例。
+     * <p>
+     * 左右两根较短，中间两根较高。
+     */
     private float resolveBarProfile(int index) {
         switch (index) {
             case 0:
@@ -561,6 +642,9 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         }
     }
 
+    /**
+     * 普通能量数组映射时，每根语音条的取样区间起始比例。
+     */
     private float resolveRangeStartRatio(int index) {
         switch (index) {
             case 0:
@@ -574,6 +658,9 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         }
     }
 
+    /**
+     * 普通能量数组映射时，每根语音条的取样区间结束比例。
+     */
     private float resolveRangeEndRatio(int index) {
         switch (index) {
             case 0:
@@ -587,6 +674,9 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         }
     }
 
+    /**
+     * 普通能量映射时，不同语音条的附加增益。
+     */
     private float resolveBandGain(int index) {
         switch (index) {
             case 0:
@@ -601,13 +691,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 判断输入数组是否包含可绘制音频能量。
-     * <p>
-     * 如果数组为 null、长度为 0，或所有值都不超过 {@link #DATA_EPSILON}，
-     * 则认为当前没有有效语音数据，控件应保持空白。
-     *
-     * @param levels 待检测的音频能量数组
-     * @return true 表示至少存在一个有效能量值
+     * 判断普通能量数组是否包含可绘制数据。
      */
     private boolean hasDrawableSpectrumData(float[] levels) {
         if (levels == null || levels.length == 0) {
@@ -622,12 +706,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     }
 
     /**
-     * 将数值限制在指定区间内。
-     *
-     * @param value 原始值
-     * @param min   最小值
-     * @param max   最大值
-     * @return 限制后的值
+     * 根据频率值换算对应的 FFT bin 下标。
      */
     private int frequencyToBin(float frequencyHz, float binWidthHz, int binCount) {
         if (binWidthHz <= 0F) {
@@ -636,6 +715,9 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         return Math.max(0, Math.min(binCount - 1, Math.round(frequencyHz / binWidthHz)));
     }
 
+    /**
+     * 判断原始 FFT 数组是否包含有效频谱数据。
+     */
     private boolean hasDrawableFftData(float[] fft) {
         if (fft == null || fft.length < 4) {
             return false;
@@ -648,18 +730,24 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         return false;
     }
 
+    /**
+     * 判断当前是否仍有肉眼可见的柱体高度。
+     */
     private boolean hasVisibleLevels(float[] levels) {
         if (levels == null || levels.length == 0) {
             return false;
         }
         for (float level : levels) {
-            if (level > 0.01F) {
+            if (level > deadZone) {
                 return true;
             }
         }
         return false;
     }
 
+    /**
+     * 将数值限制在指定区间内。
+     */
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
     }

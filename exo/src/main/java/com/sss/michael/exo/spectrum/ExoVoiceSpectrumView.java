@@ -43,7 +43,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
      * 说明当前音频状态可能已经暂停、停止或回调中断，此时控件停止绘制，
      * 避免上一帧画面停留在界面上造成误解。
      */
-    private static final long DATA_TIMEOUT_MS = 100L;
+    private static final long DATA_TIMEOUT_MS = 320L;
 
     /**
      * 有效能量阈值。
@@ -56,7 +56,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     /**
      * 实时有声状态下的最低绘制高度，避免有效语音过小时跳动显得太瘦。
      */
-    private static final float MIN_LIVE_LEVEL = 0.24F;
+    private static final float MIN_LIVE_LEVEL = 0.1F;
 
     /**
      * 语音能量增益，让小音量也能更明显地推动柱体高度。
@@ -66,7 +66,23 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     /**
      * 能量曲线指数，低于 1 时会放大中低能量段的可见高度。
      */
-    private static final float LEVEL_GAMMA = 0.72F;
+    private static final float LEVEL_GAMMA = 1.072F;
+
+    private static final float FFT_LOG_K = 0.18F;
+
+    private static final float[] VOICE_BAND_START_HZ = new float[]{110F, 260F, 520F, 1200F};
+
+    private static final float[] VOICE_BAND_END_HZ = new float[]{360F, 780F, 1800F, 4200F};
+
+    private static final float[] VOICE_BAND_GAIN = new float[]{1.00F, 1.08F, 1.16F, 1.26F};
+
+    private static final float NORMALIZATION_PEAK_DECAY = 0.92F;
+
+    private static final float FALL_DAMPING = 0.84F;
+
+    private static final float LIVE_FALL_ACCELERATION = 0.0050F;
+
+    private static final float SILENCE_FALL_ACCELERATION = 0.0042F;
 
     /**
      * 语音条画笔。
@@ -93,6 +109,10 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
      * 能量下降时回落稍慢，让语音条看起来更自然，避免生硬闪烁。
      */
     private final float[] drawLevels = new float[BAR_COUNT];
+
+    private final float[] fallVelocities = new float[BAR_COUNT];
+
+    private float normalizationPeak;
 
     /**
      * 语音条颜色。
@@ -196,7 +216,7 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
             return;
         }
         if (!hasDrawableSpectrumData(levels)) {
-            clearSpectrumData();
+            beginSilenceDecay();
             postInvalidateOnAnimation();
             return;
         }
@@ -216,9 +236,23 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
         for (int index = 0; index < BAR_COUNT; index++) {
             targetLevels[index] = 0F;
             drawLevels[index] = 0F;
+            fallVelocities[index] = 0F;
         }
+        normalizationPeak = 0F;
         hasLiveSpectrumData = false;
         lastUpdateTimeMs = 0L;
+    }
+
+    private void beginSilenceDecay() {
+        for (int index = 0; index < BAR_COUNT; index++) {
+            targetLevels[index] = 0F;
+        }
+        if (hasVisibleLevels(drawLevels)) {
+            hasLiveSpectrumData = true;
+            lastUpdateTimeMs = SystemClock.uptimeMillis();
+        } else {
+            clearSpectrumData();
+        }
     }
 
     /**
@@ -267,12 +301,21 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
     @Override
     public void onFFTReady(int sampleRateHz, int channelCount, float[] fft) {
         // 当前控件使用 FFT 回调作为默认数据入口，将原始频谱数据压缩为 4 根语音条。
-        setVoiceLevels(fft);
+        if (spectrumPaused) {
+            return;
+        }
+        if (!hasDrawableFftData(fft)) {
+            return;
+        }
+        buildTargetLevelsFromFft(sampleRateHz, channelCount, fft);
+        hasLiveSpectrumData = true;
+        lastUpdateTimeMs = SystemClock.uptimeMillis();
+        postInvalidateOnAnimation();
     }
 
     @Override
     public void onMagnitudeReady(int sampleRateHz, float[] magnitude) {
-//        setVoiceLevels(magnitude);
+
     }
 
     @Override
@@ -296,15 +339,17 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
             drawBars(canvas);
             return;
         }
-        if (nowMs - lastUpdateTimeMs > DATA_TIMEOUT_MS) {
-            return;
-        }
+        boolean silenceDecay = nowMs - lastUpdateTimeMs > DATA_TIMEOUT_MS;
 
         // 先更新当前绘制高度，再按照最新 drawLevels 绘制当前帧。
-        boolean moving = updateDrawLevels();
-        drawBars(canvas);
-        if (moving || hasLiveSpectrumData) {
+        boolean moving = updateDrawLevels(silenceDecay);
+        if (hasVisibleLevels(drawLevels)) {
+            drawBars(canvas);
+        }
+        if (moving) {
             postInvalidateOnAnimation();
+        } else if (!hasVisibleLevels(drawLevels)) {
+            clearSpectrumData();
         }
     }
 
@@ -316,12 +361,24 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
      *
      * @return true 表示仍存在可见动画位移，需要继续请求下一帧
      */
-    private boolean updateDrawLevels() {
+    private boolean updateDrawLevels(boolean silenceDecay) {
         boolean moving = false;
         for (int index = 0; index < BAR_COUNT; index++) {
-            float speed = targetLevels[index] > drawLevels[index] ? 0.62F : 0.26F;
-            drawLevels[index] += (targetLevels[index] - drawLevels[index]) * speed;
-            if (Math.abs(targetLevels[index] - drawLevels[index]) > 0.002F) {
+            float target = silenceDecay ? 0F : targetLevels[index];
+            if (target >= drawLevels[index]) {
+                drawLevels[index] += (target - drawLevels[index]) * 0.62F;
+                fallVelocities[index] = 0F;
+            } else {
+                float acceleration = silenceDecay ? SILENCE_FALL_ACCELERATION : LIVE_FALL_ACCELERATION;
+                fallVelocities[index] = (fallVelocities[index] + acceleration) * FALL_DAMPING;
+                drawLevels[index] = Math.max(target, drawLevels[index] - fallVelocities[index]);
+            }
+            drawLevels[index] = clamp(drawLevels[index], 0F, 1F);
+            if (drawLevels[index] <= DATA_EPSILON && target <= DATA_EPSILON) {
+                drawLevels[index] = 0F;
+                fallVelocities[index] = 0F;
+            }
+            if (Math.abs(target - drawLevels[index]) > 0.002F || drawLevels[index] > 0.01F || fallVelocities[index] > 0.001F) {
                 moving = true;
             }
         }
@@ -407,6 +464,92 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
      * @param index 语音条下标
      * @return 当前语音条相对于最大高度的比例系数
      */
+    private void buildTargetLevelsFromFft(int sampleRateHz, int channelCount, float[] fft) {
+        int fftSize = fft != null ? fft.length : 0;
+        int binCount = fftSize / 2;
+        if (sampleRateHz <= 0 || channelCount <= 0 || binCount <= 0) {
+            clearSpectrumData();
+            return;
+        }
+
+        float[] magnitudes = new float[binCount];
+        float amplitudeScale = 2F / Math.max(1, fftSize);
+        float maxVoiceBandValue = 0F;
+        float maxTrackedHz = Math.min(sampleRateHz * 0.5F, VOICE_BAND_END_HZ[VOICE_BAND_END_HZ.length - 1]);
+        float binWidthHz = sampleRateHz / (float) fftSize;
+
+        for (int binIndex = 0; binIndex < binCount; binIndex++) {
+            int realIndex = binIndex << 1;
+            int imaginaryIndex = realIndex + 1;
+            if (imaginaryIndex >= fft.length) {
+                break;
+            }
+            float real = fft[realIndex];
+            float imaginary = fft[imaginaryIndex];
+            float magnitude = (float) Math.sqrt(real * real + imaginary * imaginary) * amplitudeScale;
+            magnitude = magnitude / (magnitude + FFT_LOG_K);
+            magnitudes[binIndex] = magnitude;
+
+            float frequencyHz = binIndex * binWidthHz;
+            if (frequencyHz <= maxTrackedHz) {
+                maxVoiceBandValue = Math.max(maxVoiceBandValue, magnitude);
+            }
+        }
+
+        if (maxVoiceBandValue <= DATA_EPSILON) {
+            return;
+        }
+
+        if (maxVoiceBandValue > normalizationPeak) {
+            normalizationPeak = maxVoiceBandValue;
+        } else {
+            normalizationPeak = Math.max(maxVoiceBandValue, normalizationPeak * NORMALIZATION_PEAK_DECAY);
+        }
+        float stablePeak = Math.max(normalizationPeak, DATA_EPSILON);
+
+        float[] rawLevels = new float[BAR_COUNT];
+        for (int index = 0; index < BAR_COUNT; index++) {
+            int startBin = frequencyToBin(VOICE_BAND_START_HZ[index], binWidthHz, binCount);
+            int endBin = frequencyToBin(VOICE_BAND_END_HZ[index], binWidthHz, binCount);
+            if (endBin < startBin) {
+                endBin = startBin;
+            }
+
+            float sum = 0F;
+            float localMax = 0F;
+            int sampleCount = 0;
+            for (int binIndex = startBin; binIndex <= endBin && binIndex < binCount; binIndex++) {
+                float magnitude = magnitudes[binIndex];
+                sum += magnitude;
+                localMax = Math.max(localMax, magnitude);
+                sampleCount++;
+            }
+
+            float average = sum / Math.max(1, sampleCount);
+            float normalized = (average * 0.40F + localMax * 0.60F) / stablePeak;
+            rawLevels[index] = (float) Math.pow(
+                    clamp(normalized * LEVEL_GAIN * VOICE_BAND_GAIN[index], 0F, 1F),
+                    LEVEL_GAMMA
+            );
+        }
+
+        for (int index = 0; index < BAR_COUNT; index++) {
+            float blended = rawLevels[index];
+            if (index > 0) {
+                blended = blended * 0.84F + rawLevels[index - 1] * 0.16F;
+            }
+            if (index < BAR_COUNT - 1) {
+                blended = blended * 0.92F + rawLevels[index + 1] * 0.08F;
+            }
+            float desiredLevel = clamp(MIN_LIVE_LEVEL + blended * (1F - MIN_LIVE_LEVEL), 0F, 1F);
+            if (desiredLevel >= targetLevels[index]) {
+                targetLevels[index] += (desiredLevel - targetLevels[index]) * 0.72F;
+            } else {
+                targetLevels[index] += (desiredLevel - targetLevels[index]) * 0.22F;
+            }
+        }
+    }
+
     private float resolveBarProfile(int index) {
         switch (index) {
             case 0:
@@ -486,6 +629,37 @@ public class ExoVoiceSpectrumView extends View implements IExoFFTCallBack {
      * @param max   最大值
      * @return 限制后的值
      */
+    private int frequencyToBin(float frequencyHz, float binWidthHz, int binCount) {
+        if (binWidthHz <= 0F) {
+            return 0;
+        }
+        return Math.max(0, Math.min(binCount - 1, Math.round(frequencyHz / binWidthHz)));
+    }
+
+    private boolean hasDrawableFftData(float[] fft) {
+        if (fft == null || fft.length < 4) {
+            return false;
+        }
+        for (float value : fft) {
+            if (Math.abs(value) > DATA_EPSILON) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasVisibleLevels(float[] levels) {
+        if (levels == null || levels.length == 0) {
+            return false;
+        }
+        for (float level : levels) {
+            if (level > 0.01F) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
     }

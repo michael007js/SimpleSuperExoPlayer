@@ -14,10 +14,6 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 访问WIFI，用于获取WIFI状态以显示于横屏标题栏 -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <!-- 访问精确位置，用于统计WIFI信号强度以显示于横屏标题栏 -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <!-- 访问大概位置，用于统计WIFI信号强度以显示于横屏标题栏 -->
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- 声明音频使用特性 -->
     <uses-feature
         android:name="android.hardware.audio.output"
